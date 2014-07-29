@@ -23,11 +23,21 @@ type CacheHandler struct {
 	Debug   bool
 }
 
+func NewHandler(c *Cache, h http.Handler) http.Handler {
+	return &CacheHandler{
+		Handler: h,
+		Cache:   c,
+		NowFunc: func() time.Time {
+			return time.Now()
+		},
+	}
+}
+
 func (h *CacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
-	cacheable, _ := h.IsRequestCacheable(r)
-	if !cacheable {
+	ok, msg, err := h.Cache.IsRequestCacheable(r)
+	if !ok {
 		if h.Debug {
-			log.Printf("Request isn't cacheable")
+			log.Printf("Request isn't cacheable: %s", msg)
 		}
 		h.cacheSkip(rw, r)
 		return
@@ -45,20 +55,6 @@ func (h *CacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	} else {
 		h.cacheMiss(key, rw, r)
 	}
-}
-
-func (h *CacheHandler) IsRequestCacheable(r *http.Request) (bool, error) {
-	cc, err := ParseCacheControl(r.Header.Get(CacheControlHeader))
-	if err != nil {
-		log.Printf("Failed to parse Cache-Control on request: %s", err)
-		return false, err
-	}
-
-	if cc.NoCache {
-		return false, nil
-	}
-
-	return true, nil
 }
 
 func serverError(err error, rw http.ResponseWriter) bool {
@@ -112,17 +108,17 @@ func (h *CacheHandler) cacheMiss(k string, rw http.ResponseWriter, r *http.Reque
 	h.serveUpstream(crw, r)
 
 	entity := crw.entity()
-	storeable, err := h.Cache.IsStoreable(entity)
+	storeable, reason, err := h.Cache.IsStoreable(entity)
 	if err != nil {
 		log.Println(err)
 	}
 
 	if storeable {
 		writewg.Add(1)
-		go h.store(k, crw.entity())
+		go h.store(k, entity)
 	} else {
 		if h.Debug {
-			log.Printf("Response isn't storeable")
+			log.Printf("Response isn't cacheable: %s", reason)
 		}
 	}
 }
@@ -145,25 +141,11 @@ func (h *CacheHandler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CacheHandler) store(k string, ent *Entity) {
-	if h.Debug {
-		log.Printf("Writing entity to cache key %s", k)
-	}
-
 	if err := h.Cache.Store(k, ent); err != nil {
 		log.Println(err)
 	}
 
 	writewg.Done()
-}
-
-func NewHandler(c *Cache, h http.Handler) http.Handler {
-	return &CacheHandler{
-		Handler: h,
-		Cache:   c,
-		NowFunc: func() time.Time {
-			return time.Now()
-		},
-	}
 }
 
 func WaitForWrites() {

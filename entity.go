@@ -39,35 +39,6 @@ func (e *Entity) BodyString() (string, error) {
 	return string(b), nil
 }
 
-func (e *Entity) IsCacheable() (bool, error) {
-	cc, err := e.CacheControl()
-	if err != nil {
-		return false, err
-	}
-
-	if cc.NoCache {
-		return false, err
-	}
-
-	// http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html#sec13.4
-	allowed := []int{
-		http.StatusOK,
-		http.StatusFound,
-		http.StatusNonAuthoritativeInfo,
-		http.StatusMultipleChoices,
-		http.StatusMovedPermanently,
-		http.StatusGone,
-	}
-
-	for _, a := range allowed {
-		if a == e.StatusCode {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
 func (e *Entity) Dump(body bool) {
 	fmt.Printf("HTTP/1.1 %d %s", e.StatusCode, http.StatusText(e.StatusCode))
 	e.Header.Write(os.Stdout)
