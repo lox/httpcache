@@ -361,7 +361,7 @@ func (t *testRequest) run(c *Cache) *httptest.ResponseRecorder {
 	handler := NewHandler(c, t.UpstreamHandler)
 
 	if !t.Time.IsZero() {
-		handler.(*cacheHandler).NowFunc = func() time.Time {
+		handler.(*CacheHandler).NowFunc = func() time.Time {
 			return t.Time
 		}
 	}

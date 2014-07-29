@@ -16,14 +16,14 @@ const (
 
 var writewg sync.WaitGroup
 
-type cacheHandler struct {
+type CacheHandler struct {
 	Handler http.Handler
 	Cache   *Cache
 	NowFunc func() time.Time
 	Debug   bool
 }
 
-func (h *cacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+func (h *CacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	cacheable, _ := h.IsRequestCacheable(r)
 	if !cacheable {
 		if h.Debug {
@@ -47,7 +47,7 @@ func (h *cacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *cacheHandler) IsRequestCacheable(r *http.Request) (bool, error) {
+func (h *CacheHandler) IsRequestCacheable(r *http.Request) (bool, error) {
 	cc, err := ParseCacheControl(r.Header.Get(CacheControlHeader))
 	if err != nil {
 		log.Printf("Failed to parse Cache-Control on request: %s", err)
@@ -71,12 +71,12 @@ func serverError(err error, rw http.ResponseWriter) bool {
 	return false
 }
 
-func (h *cacheHandler) cacheSkip(rw http.ResponseWriter, r *http.Request) {
+func (h *CacheHandler) cacheSkip(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set(CacheHeader, "SKIP")
 	h.serveUpstream(rw, r)
 }
 
-func (h *cacheHandler) cacheHit(k string, rw http.ResponseWriter, r *http.Request) {
+func (h *CacheHandler) cacheHit(k string, rw http.ResponseWriter, r *http.Request) {
 	ent, err := h.Cache.Retrieve(k)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
@@ -101,7 +101,7 @@ func (h *cacheHandler) cacheHit(k string, rw http.ResponseWriter, r *http.Reques
 	http.ServeContent(rw, r, "", t, ent.Body)
 }
 
-func (h *cacheHandler) cacheMiss(k string, rw http.ResponseWriter, r *http.Request) {
+func (h *CacheHandler) cacheMiss(k string, rw http.ResponseWriter, r *http.Request) {
 	crw := &cachedResponseWriter{
 		ResponseWriter: rw,
 		req:            r,
@@ -136,7 +136,7 @@ var hopByHopHeaders []string = []string{
 	"Upgrade",
 }
 
-func (h *cacheHandler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
+func (h *CacheHandler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 	for _, exclude := range hopByHopHeaders {
 		r.Header.Del(exclude)
 	}
@@ -144,7 +144,7 @@ func (h *cacheHandler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 	h.Handler.ServeHTTP(rw, r)
 }
 
-func (h *cacheHandler) store(k string, ent *Entity) {
+func (h *CacheHandler) store(k string, ent *Entity) {
 	if h.Debug {
 		log.Printf("Writing entity to cache key %s", k)
 	}
@@ -157,7 +157,7 @@ func (h *cacheHandler) store(k string, ent *Entity) {
 }
 
 func NewHandler(c *Cache, h http.Handler) http.Handler {
-	return &cacheHandler{
+	return &CacheHandler{
 		Handler: h,
 		Cache:   c,
 		NowFunc: func() time.Time {
