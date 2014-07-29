@@ -5,6 +5,8 @@
 
 [![wercker status](https://app.wercker.com/status/a76986990d27e72ea656bb37bb93f59f/m "wercker status")](https://app.wercker.com/project/bykey/a76986990d27e72ea656bb37bb93f59f)
 
+[![GoDoc](https://godoc.org/github.com/lox/httpcache?status.svg)](https://godoc.org/github.com/lox/httpcache)
+
 ## Example
 
 This example if from the included CLI, it runs a caching proxy on http://localhost:8080.
