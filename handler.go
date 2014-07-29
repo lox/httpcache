@@ -20,11 +20,15 @@ type cacheHandler struct {
 	Handler http.Handler
 	Cache   *Cache
 	NowFunc func() time.Time
+	Debug   bool
 }
 
 func (h *cacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	cacheable, _ := h.IsRequestCacheable(r)
 	if !cacheable {
+		if h.Debug {
+			log.Printf("Request isn't cacheable")
+		}
 		h.cacheSkip(rw, r)
 		return
 	}
@@ -115,7 +119,11 @@ func (h *cacheHandler) cacheMiss(k string, rw http.ResponseWriter, r *http.Reque
 
 	if storeable {
 		writewg.Add(1)
-		go storeCache(h.Cache, k, crw.entity())
+		go h.store(k, crw.entity())
+	} else {
+		if h.Debug {
+			log.Printf("Response isn't storeable")
+		}
 	}
 }
 
@@ -136,8 +144,12 @@ func (h *cacheHandler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 	h.Handler.ServeHTTP(rw, r)
 }
 
-func storeCache(c *Cache, k string, ent *Entity) {
-	if err := c.Store(k, ent); err != nil {
+func (h *cacheHandler) store(k string, ent *Entity) {
+	if h.Debug {
+		log.Printf("Writing entity to cache key %s", k)
+	}
+
+	if err := h.Cache.Store(k, ent); err != nil {
 		log.Println(err)
 	}
 

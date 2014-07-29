@@ -28,7 +28,6 @@ func init() {
 func main() {
 	proxy := &httputil.ReverseProxy{
 		Director: func(r *http.Request) {
-			log.Println("proxying", r.Method, r.URL.String())
 		},
 	}
 
