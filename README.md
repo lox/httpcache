@@ -3,6 +3,8 @@
 
 `httpcache` provides an RFC2616 compliant golang [http.Handler](http://golang.org/pkg/net/http/#Handler). 
 
+[![wercker status](https://app.wercker.com/status/a76986990d27e72ea656bb37bb93f59f/m "wercker status")](https://app.wercker.com/project/bykey/a76986990d27e72ea656bb37bb93f59f)
+
 ## Example
 
 This example if from the included CLI, it runs a caching proxy on http://localhost:8080.
@@ -42,3 +44,4 @@ Latitudes afforded to caches:
 
 What Proxies must do:
  - https://www.mnot.net/blog/2011/07/11/what_proxies_must_do
+
