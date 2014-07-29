@@ -135,7 +135,7 @@ func TestCacheControlUpstreamNoStore(t *testing.T) {
 				w.Header().Set("Cache-Control", "no-store, no-cache")
 				defaultHandler.ServeHTTP(w, r)
 			}),
-			AssertCacheStatus: "MISS",
+			AssertCacheStatus: "SKIP",
 		},
 		testRequest{
 			Request:           NewRequest("GET", "http://example.org/test", nil),

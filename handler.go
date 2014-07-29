@@ -102,6 +102,7 @@ func (h *CacheHandler) cacheMiss(k string, rw http.ResponseWriter, r *http.Reque
 		ResponseWriter: rw,
 		req:            r,
 		recorder:       httptest.NewRecorder(),
+		cache:          h.Cache,
 	}
 
 	crw.Header().Set(CacheHeader, "MISS")
@@ -159,6 +160,7 @@ type cachedResponseWriter struct {
 	req      *http.Request
 	recorder *httptest.ResponseRecorder
 	code     int
+	cache    *Cache
 }
 
 func (crw *cachedResponseWriter) Write(p []byte) (int, error) {
@@ -168,6 +170,11 @@ func (crw *cachedResponseWriter) Write(p []byte) (int, error) {
 
 func (crw *cachedResponseWriter) WriteHeader(status int) {
 	crw.code = status
+
+	if ok, _, _ := crw.cache.IsCacheable(crw.entity()); !ok {
+		crw.ResponseWriter.Header().Set(CacheHeader, "SKIP")
+	}
+
 	crw.recorder.WriteHeader(status)
 	crw.ResponseWriter.WriteHeader(status)
 }
