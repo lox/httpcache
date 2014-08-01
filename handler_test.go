@@ -8,11 +8,12 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"os"
-
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 var testTime time.Time = time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)
@@ -40,9 +41,7 @@ func TestUpstreamHeadersCopied(t *testing.T) {
 		},
 	}
 
-	if err := runRequests(requests, NewPrivateCache()); err != nil {
-		t.Fatal(err)
-	}
+	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
 func TestCacheMiss(t *testing.T) {
@@ -53,9 +52,7 @@ func TestCacheMiss(t *testing.T) {
 		},
 	}
 
-	if err := runRequests(requests, NewPrivateCache()); err != nil {
-		t.Fatal(err)
-	}
+	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
 func TestCacheHit(t *testing.T) {
@@ -70,9 +67,7 @@ func TestCacheHit(t *testing.T) {
 		},
 	}
 
-	if err := runRequests(requests, NewPrivateCache()); err != nil {
-		t.Fatal(err)
-	}
+	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
 func TestCacheHitWithHead(t *testing.T) {
@@ -93,9 +88,7 @@ func TestCacheHitWithHead(t *testing.T) {
 		},
 	}
 
-	if err := runRequests(requests, NewPrivateCache()); err != nil {
-		t.Fatal(err)
-	}
+	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
 func TestCacheAge(t *testing.T) {
@@ -122,9 +115,7 @@ func TestCacheAge(t *testing.T) {
 		},
 	}
 
-	if err := runRequests(requests, NewPrivateCache()); err != nil {
-		t.Fatal(err)
-	}
+	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
 func TestCacheControlUpstreamNoStore(t *testing.T) {
@@ -143,9 +134,7 @@ func TestCacheControlUpstreamNoStore(t *testing.T) {
 		},
 	}
 
-	if err := runRequests(requests, NewPrivateCache()); err != nil {
-		t.Fatal(err)
-	}
+	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
 func TestCacheControlRequestNoStore(t *testing.T) {
@@ -158,12 +147,10 @@ func TestCacheControlRequestNoStore(t *testing.T) {
 		},
 	}
 
-	if err := runRequests(requests, NewPrivateCache()); err != nil {
-		t.Fatal(err)
-	}
+	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
-func TestCacheNegotiation(t *testing.T) {
+func TestConditionalResponses(t *testing.T) {
 	requests := []testRequest{
 		testRequest{
 			Request: NewRequest("GET", "http://example.org/test", http.Header{}),
@@ -200,9 +187,7 @@ func TestCacheNegotiation(t *testing.T) {
 		},
 	}
 
-	if err := runRequests(requests, NewPrivateCache()); err != nil {
-		t.Fatal(err)
-	}
+	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
 func TestHopByHopHeadersNotSentUpstream(t *testing.T) {
@@ -217,41 +202,41 @@ func TestHopByHopHeadersNotSentUpstream(t *testing.T) {
 		},
 	}
 
-	if err := runRequests(requests, NewPrivateCache()); err != nil {
-		t.Fatal(err)
-	}
+	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
-// func TestCachingNotModifiedResponses(t *testing.T) {
-// 	requests := []testRequest{
-// 		testRequest{
-// 			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-// 				if r.Header.Get("If-None-Match") != "llamas-rock" {
-// 					t.Fatal("If-None-Match headers not forwarded upstream")
-// 				}
-// 				w.WriteHeader(http.StatusNotModified)
-// 			}),
-// 			Request: NewRequest("GET", "http://example.org/test", http.Header{
-// 				"If-None-Match": []string{"llamas-rock"},
-// 			}),
-// 			AssertCacheStatus: "MISS",
-// 			AssertCode:        http.StatusNotModified,
-// 		},
-// 		testRequest{
-// 			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-// 				t.Fatal("Shouldn't hit upstream for cached requests")
-// 			}),
-// 			Request: NewRequest("GET", "http://example.org/test", http.Header{
-// 				"If-None-Match": []string{"llamas-rock"},
-// 			}),
-// 			AssertCacheStatus: "HIT",
-// 		},
-// 	}
+func TestCachingConditionalResponses(t *testing.T) {
+	requests := []testRequest{
+		testRequest{
+			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("If-None-Match") != "llamas-rock" {
+					t.Fatal("If-None-Match headers not forwarded upstream")
+				}
+				w.WriteHeader(http.StatusNotModified)
+			}),
+			Request: NewRequest("GET", "http://example.org/test", http.Header{
+				"If-None-Match": []string{"llamas-rock"},
+			}),
+			AssertCacheStatus: "MISS",
+			AssertCode:        http.StatusNotModified,
+		},
+		testRequest{
+			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatal("Shouldn't hit upstream for cached requests")
+			}),
+			Request: NewRequest("GET", "http://example.org/test", http.Header{
+				"If-None-Match": []string{"llamas-rock"},
+			}),
+			AssertCacheStatus: "HIT",
+		},
+		testRequest{
+			Request:           NewRequest("GET", "http://example.org/test", nil),
+			AssertCacheStatus: "MISS",
+		},
+	}
 
-// 	if err := runRequests(requests, NewPrivateCache()); err != nil {
-// 		t.Fatal(err)
-// 	}
-// }
+	runRequests(requests, NewPrivateCache(), assert.New(t))
+}
 
 func NewRequest(method string, url string, h http.Header) *http.Request {
 	r, err := http.NewRequest(method, url, strings.NewReader(""))
@@ -330,23 +315,17 @@ func (t *testRequest) applyDefaults() *testRequest {
 	return t
 }
 
-func (t *testRequest) checkAssertions(r *httptest.ResponseRecorder) error {
-	if got, want := r.Code, t.AssertCode; got != want {
-		return fmt.Errorf("Response code = %d, want %d", got, want)
-	}
+func (t *testRequest) checkAssertions(r *httptest.ResponseRecorder, assert *assert.Assertions) error {
+	assert.Equal(t.AssertCode, r.Code)
 
 	cacheStatus := r.HeaderMap.Get(CacheHeader)
 	if t.AssertCacheStatus != "" {
-		if got, want := cacheStatus, t.AssertCacheStatus; got != want {
-			return fmt.Errorf("Cache status = %s want %s", got, want)
-		}
+		assert.Equal(t.AssertCacheStatus, cacheStatus)
 	}
 
 	contentLength := r.HeaderMap.Get("Content-Length")
 	if t.AssertContentLength != "" {
-		if got, want := contentLength, t.AssertContentLength; got != want {
-			return fmt.Errorf("Content-Length = %s want %s", got, want)
-		}
+		assert.Equal(t.AssertContentLength, contentLength)
 	}
 
 	if t.AssertResponse != nil {
@@ -380,7 +359,7 @@ func (t *testRequest) run(c *Cache) *httptest.ResponseRecorder {
 
 	if dumpRequests {
 		buf := &bytes.Buffer{}
-		buf.WriteString("HTTP/1.1 " + http.StatusText(recorder.Code) + "\n")
+		buf.WriteString(fmt.Sprintf("HTTP/1.1 %d %s\n", recorder.Code, http.StatusText(recorder.Code)))
 		recorder.HeaderMap.Write(buf)
 		buf.WriteString("\n")
 		buf.Write(recorder.Body.Bytes())
@@ -391,9 +370,9 @@ func (t *testRequest) run(c *Cache) *httptest.ResponseRecorder {
 	return recorder
 }
 
-func runRequests(reqs []testRequest, c *Cache) error {
+func runRequests(reqs []testRequest, c *Cache, a *assert.Assertions) error {
 	for _, req := range reqs {
-		if err := req.checkAssertions(req.applyDefaults().run(c)); err != nil {
+		if err := req.checkAssertions(req.applyDefaults().run(c), a); err != nil {
 			return err
 		}
 	}

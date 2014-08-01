@@ -1,7 +1,7 @@
 
 # httpcache
 
-`httpcache` provides an RFC2616 compliant golang [http.Handler](http://golang.org/pkg/net/http/#Handler). 
+`httpcache` provides an [rfc7234][] compliant golang [http.Handler](http://golang.org/pkg/net/http/#Handler). 
 
 [![wercker status](https://app.wercker.com/status/a76986990d27e72ea656bb37bb93f59f/m "wercker status")](https://app.wercker.com/project/bykey/a76986990d27e72ea656bb37bb93f59f)
 
@@ -29,21 +29,21 @@ log.Fatal(http.ListenAndServe("127.0.0.1:8080", logger))
 ## Todo
 
 - Revalidation
-- Heuristic freshness
-- Private / Public caching
 - Vary support 
-- Cache invalidation
-- Pluggable backends
+- Better range support (with caching)
+- HEAD invalidation of GETs
 
 ## Reading List
+
+- http://httpwg.github.io/specs/rfc7234.html
+- https://www.mnot.net/blog/2011/07/11/what_proxies_must_do
+- https://www.mnot.net/blog/2014/06/07/rfc2616_is_dead
 
 Preventing Request Splitting:
  - http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-14#section-3.3
  - http://projects.webappsec.org/w/page/13246931/HTTP-Response-Splitting
 
-Latitudes afforded to caches:
- - http://tools.ietf.org/html/draft-ietf-httpbis-p6-cache-14#section-2.2
 
-What Proxies must do:
- - https://www.mnot.net/blog/2011/07/11/what_proxies_must_do
+[rfc7234]: http://httpwg.github.io/specs/rfc7234.html
+
 

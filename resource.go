@@ -10,15 +10,15 @@ import (
 	"time"
 )
 
-type Entity struct {
+type Resource struct {
 	Header     http.Header
 	Body       io.ReadSeeker
 	StatusCode int
 	Method     string
 }
 
-func NewEntity(method string, code int, h http.Header, body io.ReadSeeker) *Entity {
-	return &Entity{
+func NewResource(method string, code int, h http.Header, body io.ReadSeeker) *Resource {
+	return &Resource{
 		Header:     h,
 		Body:       body,
 		Method:     method,
@@ -26,11 +26,11 @@ func NewEntity(method string, code int, h http.Header, body io.ReadSeeker) *Enti
 	}
 }
 
-func (e *Entity) CacheControl() (CacheControl, error) {
+func (e *Resource) CacheControl() (CacheControl, error) {
 	return ParseCacheControl(e.Header.Get(CacheControlHeader))
 }
 
-func (e *Entity) BodyString() (string, error) {
+func (e *Resource) BodyString() (string, error) {
 	b, err := ioutil.ReadAll(e.Body)
 	if err != nil {
 		return "", err
@@ -39,7 +39,7 @@ func (e *Entity) BodyString() (string, error) {
 	return string(b), nil
 }
 
-func (e *Entity) Dump(body bool) {
+func (e *Resource) Dump(body bool) {
 	fmt.Printf("HTTP/1.1 %d %s", e.StatusCode, http.StatusText(e.StatusCode))
 	e.Header.Write(os.Stdout)
 	if body {
@@ -51,12 +51,12 @@ func (e *Entity) Dump(body bool) {
 	}
 }
 
-func (e *Entity) hasHeader(key string) bool {
+func (e *Resource) hasHeader(key string) bool {
 	_, exists := e.Header[key]
 	return exists
 }
 
-func (e *Entity) LastModified() (time.Time, bool, error) {
+func (e *Resource) LastModified() (time.Time, bool, error) {
 	if !e.hasHeader("Last-Modified") {
 		return time.Time{}, false, nil
 	}
@@ -71,7 +71,7 @@ func (e *Entity) LastModified() (time.Time, bool, error) {
 
 // Age returns the time difference between when a requests
 // was created and an abitrary time
-func (e *Entity) Age(now time.Time) (time.Duration, error) {
+func (e *Resource) Age(now time.Time) (time.Duration, error) {
 	dateHeader := e.Header.Get("Date")
 	if dateHeader == "" {
 		return time.Duration(0), nil
@@ -85,7 +85,7 @@ func (e *Entity) Age(now time.Time) (time.Duration, error) {
 }
 
 // Expires parses an Expires header
-func (e *Entity) Expires() (time.Time, error) {
+func (e *Resource) Expires() (time.Time, error) {
 	expires := e.Header.Get("Expires")
 	if expires == "" {
 		return time.Time{}, nil
@@ -100,7 +100,7 @@ func (e *Entity) Expires() (time.Time, error) {
 }
 
 // Freshness returns how long the entity is fresh for
-func (e *Entity) Freshness(now time.Time) (time.Duration, error) {
+func (e *Resource) Freshness(now time.Time) (time.Duration, error) {
 	cc, err := e.CacheControl()
 	if err != nil {
 		log.Printf("Failed parsing cache-control: %s", err)
@@ -120,7 +120,7 @@ func (e *Entity) Freshness(now time.Time) (time.Duration, error) {
 }
 
 // SharedFreshness returns the freshness lifetime of an entity for a shared cache
-func (e *Entity) SharedFreshness(now time.Time) (time.Duration, error) {
+func (e *Resource) SharedFreshness(now time.Time) (time.Duration, error) {
 	freshness, err := e.Freshness(now)
 	if err != nil {
 		return time.Duration(0), err

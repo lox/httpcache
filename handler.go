@@ -11,7 +11,8 @@ import (
 )
 
 const (
-	CacheHeader = "X-Cache"
+	CacheHeader      = "X-Cache"
+	CacheDebugHeader = "X-Cache-Debug"
 )
 
 var writewg sync.WaitGroup
@@ -34,27 +35,46 @@ func NewHandler(c *Cache, h http.Handler) http.Handler {
 }
 
 func (h *CacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
-	ok, msg, err := h.Cache.IsRequestCacheable(r)
+	ok, reason, _ := h.Cache.IsRequestCacheable(r)
 	if !ok {
 		if h.Debug {
-			log.Printf("Request isn't cacheable: %s", msg)
+			log.Printf("Request isn't cacheable: %s", reason)
 		}
 		h.cacheSkip(rw, r)
+		rw.Header().Set(CacheDebugHeader, reason)
 		return
 	}
 
-	key, err := Key(r)
-	if err != nil {
-		log.Println("Failed to calculate request key: ", err)
-		h.cacheSkip(rw, r)
-		return
+	searchKeys := map[string]string{}
+
+	if key, ok, _ := ConditionalKey(r.Method, r.URL.String(), r.Header); ok {
+		searchKeys["conditional"] = key
 	}
 
-	if h.Cache.Has(key) {
-		h.cacheHit(key, rw, r)
+	if key, err := Key(r.Method, r.URL.String()); serverError(err, rw) {
+		return
 	} else {
-		h.cacheMiss(key, rw, r)
+		searchKeys["basic"] = key
 	}
+
+	if r.Method == "HEAD" {
+		getKey, err := Key("GET", r.URL.String())
+		if serverError(err, rw) {
+			return
+		} else {
+			searchKeys["basic_get"] = getKey
+		}
+	}
+
+	for _, key := range searchKeys {
+		if res, ok := h.Cache.Get(key); ok {
+			// log.Printf("Cache hit on %s (%s): %#v", key, t, res)
+			h.cacheHit(res, rw, r)
+			return
+		}
+	}
+
+	h.cacheMiss(rw, r)
 }
 
 func serverError(err error, rw http.ResponseWriter) bool {
@@ -67,18 +87,28 @@ func serverError(err error, rw http.ResponseWriter) bool {
 	return false
 }
 
+func (h *CacheHandler) handleHead(rw http.ResponseWriter, r *http.Request) bool {
+	key, err := Key("GET", r.URL.String())
+	if serverError(err, rw) {
+		return true
+	}
+
+	res, ok := h.Cache.Get(key)
+	if ok {
+		h.cacheHit(res, rw, r)
+		return true
+	}
+
+	return false
+}
+
 func (h *CacheHandler) cacheSkip(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set(CacheHeader, "SKIP")
 	h.serveUpstream(rw, r)
 }
 
-func (h *CacheHandler) cacheHit(k string, rw http.ResponseWriter, r *http.Request) {
-	ent, err := h.Cache.Retrieve(k)
-	if err != nil {
-		http.Error(rw, err.Error(), http.StatusInternalServerError)
-	}
-
-	for key, headers := range ent.Header {
+func (h *CacheHandler) cacheHit(res *Resource, rw http.ResponseWriter, r *http.Request) {
+	for key, headers := range res.Header {
 		for _, value := range headers {
 			rw.Header().Set(key, value)
 		}
@@ -86,18 +116,17 @@ func (h *CacheHandler) cacheHit(k string, rw http.ResponseWriter, r *http.Reques
 
 	rw.Header().Set(CacheHeader, "HIT")
 
-	// set an Age header
-	if age, err := ent.Age(h.NowFunc()); err != nil {
+	if age, err := res.Age(h.NowFunc()); err != nil {
 		log.Printf("Error calculating age: %s", err)
 	} else {
 		rw.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
 	}
 
-	t, _, _ := ent.LastModified()
-	http.ServeContent(rw, r, "", t, ent.Body)
+	t, _, _ := res.LastModified()
+	http.ServeContent(rw, r, "", t, res.Body)
 }
 
-func (h *CacheHandler) cacheMiss(k string, rw http.ResponseWriter, r *http.Request) {
+func (h *CacheHandler) cacheMiss(rw http.ResponseWriter, r *http.Request) {
 	crw := &cachedResponseWriter{
 		ResponseWriter: rw,
 		req:            r,
@@ -108,15 +137,28 @@ func (h *CacheHandler) cacheMiss(k string, rw http.ResponseWriter, r *http.Reque
 	crw.Header().Set(CacheHeader, "MISS")
 	h.serveUpstream(crw, r)
 
-	entity := crw.entity()
-	storeable, reason, err := h.Cache.IsStoreable(entity)
+	resource := crw.resource()
+	storeable, reason, err := h.Cache.IsStoreable(resource)
 	if err != nil {
 		log.Println(err)
 	}
 
+	var key string
+
+	if condKey, ok, _ := ConditionalKey(r.Method, r.URL.String(), r.Header); ok {
+		key = condKey
+	} else {
+		basicKey, err := Key(r.Method, r.URL.String())
+		if err != nil {
+			serverError(err, rw)
+			return
+		}
+		key = basicKey
+	}
+
 	if storeable {
 		writewg.Add(1)
-		go h.store(k, entity)
+		go h.store(key, resource)
 	} else {
 		if h.Debug {
 			log.Printf("Response isn't cacheable: %s", reason)
@@ -127,8 +169,10 @@ func (h *CacheHandler) cacheMiss(k string, rw http.ResponseWriter, r *http.Reque
 var hopByHopHeaders []string = []string{
 	"Connection",
 	"Keep-Alive",
-	"Public",
 	"Proxy-Authenticate",
+	"Proxy-Authorization",
+	"TE",
+	"Trailers",
 	"Transfer-Encoding",
 	"Upgrade",
 }
@@ -141,8 +185,13 @@ func (h *CacheHandler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 	h.Handler.ServeHTTP(rw, r)
 }
 
-func (h *CacheHandler) store(k string, ent *Entity) {
-	if err := h.Cache.Store(k, ent); err != nil {
+func (h *CacheHandler) store(key string, res *Resource) {
+	if key == "" {
+		panic("Refusing to store an empty key")
+	}
+
+	// log.Printf("storing %s => %#v", key, res)
+	if err := h.Cache.Set(key, res); err != nil {
 		log.Println(err)
 	}
 
@@ -171,16 +220,18 @@ func (crw *cachedResponseWriter) Write(p []byte) (int, error) {
 func (crw *cachedResponseWriter) WriteHeader(status int) {
 	crw.code = status
 
-	if ok, _, _ := crw.cache.IsCacheable(crw.entity()); !ok {
+	if ok, reason, _ := crw.cache.IsCacheable(crw.resource()); !ok {
 		crw.ResponseWriter.Header().Set(CacheHeader, "SKIP")
+		crw.ResponseWriter.Header().Set(CacheDebugHeader, reason)
+
 	}
 
 	crw.recorder.WriteHeader(status)
 	crw.ResponseWriter.WriteHeader(status)
 }
 
-func (crw *cachedResponseWriter) entity() *Entity {
-	return NewEntity(
+func (crw *cachedResponseWriter) resource() *Resource {
+	return NewResource(
 		crw.req.Method,
 		crw.code,
 		crw.ResponseWriter.Header(),

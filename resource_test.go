@@ -18,7 +18,7 @@ func mustParseTime(s string) time.Time {
 
 func TestAge(t *testing.T) {
 	time1 := mustParseTime("24 Sep 1981 01:00:00 GMT")
-	entity := &Entity{
+	entity := &Resource{
 		Body: bytes.NewReader([]byte("llamas")),
 		Header: http.Header{
 			"Date": []string{time1.Format(http.TimeFormat)},
@@ -35,7 +35,7 @@ func TestAge(t *testing.T) {
 }
 
 func TestMaxAgeFreshness(t *testing.T) {
-	entity := &Entity{
+	entity := &Resource{
 		Body: bytes.NewReader([]byte("llamas")),
 		Header: http.Header{
 			"Cache-Control": []string{"max-age=3600 s-maxage=86400"},
@@ -53,7 +53,7 @@ func TestMaxAgeFreshness(t *testing.T) {
 }
 
 func TestSharedMaxAgeFreshness(t *testing.T) {
-	entity := &Entity{
+	entity := &Resource{
 		Body: bytes.NewReader([]byte("llamas")),
 		Header: http.Header{
 			"Cache-Control": []string{"max-age=600 s-maxage=3600"},
@@ -72,7 +72,7 @@ func TestSharedMaxAgeFreshness(t *testing.T) {
 
 func TestExpires(t *testing.T) {
 	time1 := mustParseTime("24 Sep 1981 01:00:00 GMT")
-	entity := &Entity{
+	entity := &Resource{
 		Body: bytes.NewReader([]byte("llamas")),
 		Header: http.Header{
 			"Expires": []string{time1.Format(http.TimeFormat)},
@@ -93,7 +93,7 @@ func TestExpiresFreshness(t *testing.T) {
 	time1 := mustParseTime("24 Sep 1981 01:00:00 GMT")
 	time2 := mustParseTime("25 Sep 1981 01:00:00 GMT")
 
-	entity := &Entity{
+	entity := &Resource{
 		Body: bytes.NewReader([]byte("llamas")),
 		Header: http.Header{
 			"Expires": []string{time1.AddDate(0, 0, 2).Format(http.TimeFormat)},

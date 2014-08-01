@@ -10,23 +10,23 @@ import (
 
 func TestStoringInCache(t *testing.T) {
 	cache := NewPublicCache()
-	ent := &Entity{
+	r1 := &Resource{
 		Header: make(http.Header),
 		Body:   strings.NewReader("tests"),
 	}
 
-	if err := cache.Store("test", ent); err != nil {
+	if err := cache.Set("test", r1); err != nil {
 		t.Fatal(err)
 	}
 
-	entRet, err := cache.Retrieve("test")
-	if err != nil {
-		t.Fatal(err)
-	} else if entRet != ent {
-		t.Fatal("Retrieved entity isn't the same as stored")
+	r2, ok := cache.Get("test")
+	if !ok {
+		t.Fatal("Failed to find resource by key")
+	} else if r1 != r2 {
+		t.Fatal("Retrieved resource isn't the same as stored")
 	}
 
-	b, err := ioutil.ReadAll(entRet.Body)
+	b, err := ioutil.ReadAll(r2.Body)
 	if err != nil {
 		t.Fatal(err)
 	}

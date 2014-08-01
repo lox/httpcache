@@ -1,57 +1,35 @@
 package httpcache
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 )
 
 type Cache struct {
-	store   map[string]*Entity
-	private bool
+	Store
+	Private bool
 }
 
 func NewPrivateCache() *Cache {
 	return &Cache{
-		store:   map[string]*Entity{},
-		private: true,
+		Store:   NewMapStore(),
+		Private: true,
 	}
 }
 
 func NewPublicCache() *Cache {
 	return &Cache{
-		store:   map[string]*Entity{},
-		private: false,
+		Store:   NewMapStore(),
+		Private: false,
 	}
 }
 
-func (c *Cache) Store(key string, ent *Entity) error {
-	c.store[key] = ent
-	return nil
-}
-
-func (c *Cache) Has(key string) bool {
-	_, exists := c.store[key]
-	return exists
-}
-
-var ErrKeyMissing error = errors.New("key missing from cache")
-
-func (c *Cache) Retrieve(key string) (*Entity, error) {
-	ent, exists := c.store[key]
-	if !exists {
-		return nil, ErrKeyMissing
-	}
-
-	return ent, nil
-}
-
-func (c *Cache) IsStoreable(ent *Entity) (bool, string, error) {
-	if ok, reason, err := c.IsCacheable(ent); !ok {
+func (c *Cache) IsStoreable(res *Resource) (bool, string, error) {
+	if ok, reason, err := c.IsCacheable(res); !ok {
 		return ok, reason, err
 	}
 
-	cc, err := ent.CacheControl()
+	cc, err := res.CacheControl()
 	if err != nil {
 		return false, err.Error(), err
 	}
@@ -60,15 +38,15 @@ func (c *Cache) IsStoreable(ent *Entity) (bool, string, error) {
 		return false, "Response contained no-store", err
 	}
 
-	if cc.Private && !c.private {
+	if cc.Private && !c.Private {
 		return false, "Response is private", nil
 	}
 
 	return true, "", nil
 }
 
-func (c *Cache) IsCacheable(ent *Entity) (bool, string, error) {
-	cc, err := ent.CacheControl()
+func (c *Cache) IsCacheable(res *Resource) (bool, string, error) {
+	cc, err := res.CacheControl()
 	if err != nil {
 		return false, err.Error(), err
 	}
@@ -81,6 +59,7 @@ func (c *Cache) IsCacheable(ent *Entity) (bool, string, error) {
 	allowed := []int{
 		http.StatusOK,
 		http.StatusFound,
+		http.StatusNotModified,
 		http.StatusNonAuthoritativeInfo,
 		http.StatusMultipleChoices,
 		http.StatusMovedPermanently,
@@ -88,17 +67,17 @@ func (c *Cache) IsCacheable(ent *Entity) (bool, string, error) {
 	}
 
 	for _, a := range allowed {
-		if a == ent.StatusCode {
+		if a == res.StatusCode {
 			return true, "", nil
 		}
 	}
 
-	msg := fmt.Sprintf("Response code %d isn't cacheable", ent.StatusCode)
+	msg := fmt.Sprintf("Response code %d isn't cacheable", res.StatusCode)
 	return false, msg, nil
 }
 
-func (c *Cache) IsRequestCacheable(r *http.Request) (bool, string, error) {
-	cc, err := ParseCacheControl(r.Header.Get(CacheControlHeader))
+func (c *Cache) IsRequestCacheable(req *http.Request) (bool, string, error) {
+	cc, err := ParseCacheControl(req.Header.Get(CacheControlHeader))
 	if err != nil {
 		return false, err.Error(), err
 	}
