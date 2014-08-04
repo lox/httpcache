@@ -1,65 +1,44 @@
 package httpcache
 
 import (
-	"crypto/md5"
+	"bytes"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
-// Key generates a cache key from MD5(Lowercase(METHOD),Canonical(URL))
-func Key(method, url string) (string, error) {
-	canonical, err := CanonicalUrl(url)
-	if err != nil {
-		return "", err
+// Key generates a unique string that identifies the resource that
+// is being requested. The request method and url are taken into
+// account and canonicalized, the result is a hash of the inputs
+func Key(method string, u *url.URL) string {
+	if method == "HEAD" {
+		method = "GET"
 	}
 
-	hasher := md5.New()
-	io.WriteString(hasher, strings.ToLower(method))
-	io.WriteString(hasher, canonical)
-
-	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
+	return fmt.Sprintf("%s:%s",
+		method, strings.ToLower(CanonicalUrl(u).String()))
 }
 
-// SecondaryKey generates a key from MD5(Key,Headers)
-func SecondaryKey(method, url string, headers http.Header) (string, error) {
-	primary, err := Key(method, url)
-	if err != nil {
-		return "", err
-	}
-
-	hasher := md5.New()
-	io.WriteString(hasher, string(primary))
-	headers.Write(hasher)
-
-	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
+// RequestKey generates a Key for a request
+func RequestKey(r *http.Request) string {
+	return Key(r.Method, r.URL)
 }
 
-// ConditionalKey generates a key from MD5(SecondaryKey(If-None-Match && If-Modified-Since))
-// The second return parameter will be false if the request isn't conditional
-func ConditionalKey(method, url string, headers http.Header) (string, bool, error) {
-	validators := http.Header{}
+// SecondaryKey generates a key from Key+Headers
+func SecondaryKey(key string, headers http.Header) string {
+	b := bytes.NewBufferString(key)
+	b.WriteString("::")
 
-	if v := headers.Get("If-None-Match"); v != "" {
-		validators.Set("If-None-Match", v)
-	}
-
-	if v := headers.Get("If-Modified-Since"); v != "" {
-		validators.Set("If-Modified-Since", v)
-	}
-
-	if len(validators) > 0 {
-		if key, err := SecondaryKey(method, url, validators); err != nil {
-			return "", false, err
-		} else {
-			return key, true, nil
+	for key, vals := range headers {
+		for _, val := range vals {
+			b.WriteString(key + "=" + val)
 		}
 	}
 
-	return "", false, nil
+	return strings.TrimSuffix(b.String(), ":")
 }
 
-func CanonicalUrl(url string) (string, error) {
-	return strings.ToLower(url), nil
+func CanonicalUrl(u *url.URL) *url.URL {
+	return u
 }

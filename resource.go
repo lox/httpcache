@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 )
@@ -15,15 +16,11 @@ type Resource struct {
 	Body       io.ReadSeeker
 	StatusCode int
 	Method     string
+	URL        *url.URL
 }
 
-func NewResource(method string, code int, h http.Header, body io.ReadSeeker) *Resource {
-	return &Resource{
-		Header:     h,
-		Body:       body,
-		Method:     method,
-		StatusCode: code,
-	}
+func (e *Resource) Key() string {
+	return Key(e.Method, e.URL)
 }
 
 func (e *Resource) CacheControl() (CacheControl, error) {
@@ -40,7 +37,7 @@ func (e *Resource) BodyString() (string, error) {
 }
 
 func (e *Resource) Dump(body bool) {
-	fmt.Printf("HTTP/1.1 %d %s", e.StatusCode, http.StatusText(e.StatusCode))
+	fmt.Printf("HTTP/1.1 %d %s\n", e.StatusCode, http.StatusText(e.StatusCode))
 	e.Header.Write(os.Stdout)
 	if body {
 		rb, err := ioutil.ReadAll(e.Body)

@@ -2,9 +2,10 @@ package httpcache
 
 type Store interface {
 	Get(key string) (*Resource, bool)
-	Set(key string, r *Resource) error
+	Set(key string, r *Resource)
 }
 
+// BUG(lox): Needs a mutex for concurrency
 type MapStore struct {
 	resources map[string]*Resource
 }
@@ -18,7 +19,6 @@ func (m *MapStore) Get(k string) (*Resource, bool) {
 	return r, ok
 }
 
-func (m *MapStore) Set(k string, r *Resource) error {
+func (m *MapStore) Set(k string, r *Resource) {
 	m.resources[k] = r
-	return nil
 }

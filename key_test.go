@@ -2,37 +2,39 @@ package httpcache
 
 import (
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestKeysDiffer(t *testing.T) {
-	k1, err := Key("GET", "http://example.org/test")
+func mustParseUrl(u string) *url.URL {
+	ru, err := url.Parse(u)
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
+	return ru
+}
 
-	k2, err := Key("GET", "http://example.org/test/llamas")
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestKeysDiffer(t *testing.T) {
+	k1 := Key("GET", mustParseUrl("http://x.org/test"))
+	k2 := Key("GET", mustParseUrl("http://y.org/test"))
 
 	assert.NotEqual(t, k1, k2)
 }
 
-func TestSecondaryKeysDiffer(t *testing.T) {
-	k1, err := Key("GET", "http://example.org/test")
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestHeadIsTheSameAsGet(t *testing.T) {
+	k1 := Key("GET", mustParseUrl("http://x.org/test"))
+	k2 := Key("HEAD", mustParseUrl("http://x.org/test"))
 
-	k2, err := SecondaryKey("GET", "http://example.org/test/", http.Header{
-		"X-Test": []string{"Test"},
+	assert.Equal(t, k1, k2)
+}
+
+func TestSecondaryKeysDiffer(t *testing.T) {
+	k1 := Key("GET", mustParseUrl("http://x.org/test"))
+	k2 := SecondaryKey(Key("GET", mustParseUrl("http://x.org/test")), http.Header{
+		"X-Test": []string{"llamas"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	assert.NotEqual(t, k1, k2)
 }

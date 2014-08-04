@@ -32,6 +32,9 @@ log.Fatal(http.ListenAndServe("127.0.0.1:8080", logger))
 - Vary support 
 - Better range support (with caching)
 - HEAD invalidation of GETs
+- Heuristic freshness
+- Staleness warnings
+- Corrected Age calculations
 
 ## Reading List
 

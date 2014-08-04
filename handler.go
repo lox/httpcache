@@ -37,41 +37,33 @@ func NewHandler(c *Cache, h http.Handler) http.Handler {
 func (h *CacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	ok, reason, _ := h.Cache.IsRequestCacheable(r)
 	if !ok {
-		if h.Debug {
-			log.Printf("Request isn't cacheable: %s", reason)
-		}
 		h.cacheSkip(rw, r)
 		rw.Header().Set(CacheDebugHeader, reason)
 		return
 	}
 
-	searchKeys := map[string]string{}
+	key := Key(r.Method, r.URL)
 
-	if key, ok, _ := ConditionalKey(r.Method, r.URL.String(), r.Header); ok {
-		searchKeys["conditional"] = key
-	}
-
-	if key, err := Key(r.Method, r.URL.String()); serverError(err, rw) {
+	if res, ok := h.Cache.Get(key); ok {
+		// log.Printf("cache hit on %s", key)
+		h.cacheHit(res, rw, r)
 		return
-	} else {
-		searchKeys["basic"] = key
 	}
 
-	if r.Method == "HEAD" {
-		getKey, err := Key("GET", r.URL.String())
-		if serverError(err, rw) {
-			return
-		} else {
-			searchKeys["basic_get"] = getKey
-		}
-	}
+	// log.Printf("cache miss on %s", key)
 
-	for _, key := range searchKeys {
-		if res, ok := h.Cache.Get(key); ok {
-			// log.Printf("Cache hit on %s (%s): %#v", key, t, res)
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		condKey := SecondaryKey(key, http.Header{
+			"If-None-Match": []string{ifNoneMatch},
+		})
+
+		if res, ok := h.Cache.Get(condKey); ok {
+			// log.Printf("cache hit on %s", condKey)
 			h.cacheHit(res, rw, r)
 			return
 		}
+
+		// log.Printf("cache miss on %s", condKey)
 	}
 
 	h.cacheMiss(rw, r)
@@ -81,21 +73,6 @@ func serverError(err error, rw http.ResponseWriter) bool {
 	if err != nil {
 		log.Println(err)
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
-		return true
-	}
-
-	return false
-}
-
-func (h *CacheHandler) handleHead(rw http.ResponseWriter, r *http.Request) bool {
-	key, err := Key("GET", r.URL.String())
-	if serverError(err, rw) {
-		return true
-	}
-
-	res, ok := h.Cache.Get(key)
-	if ok {
-		h.cacheHit(res, rw, r)
 		return true
 	}
 
@@ -143,22 +120,9 @@ func (h *CacheHandler) cacheMiss(rw http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 	}
 
-	var key string
-
-	if condKey, ok, _ := ConditionalKey(r.Method, r.URL.String(), r.Header); ok {
-		key = condKey
-	} else {
-		basicKey, err := Key(r.Method, r.URL.String())
-		if err != nil {
-			serverError(err, rw)
-			return
-		}
-		key = basicKey
-	}
-
 	if storeable {
 		writewg.Add(1)
-		go h.store(key, resource)
+		go h.store(r, resource)
 	} else {
 		if h.Debug {
 			log.Printf("Response isn't cacheable: %s", reason)
@@ -185,17 +149,24 @@ func (h *CacheHandler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 	h.Handler.ServeHTTP(rw, r)
 }
 
-func (h *CacheHandler) store(key string, res *Resource) {
-	if key == "" {
-		panic("Refusing to store an empty key")
+func (h *CacheHandler) store(req *http.Request, res *Resource) {
+	defer writewg.Done()
+
+	key := RequestKey(req)
+
+	// store with a conditional key
+	if ifNoneMatch := req.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		condKey := SecondaryKey(key, http.Header{
+			"If-None-Match": []string{ifNoneMatch},
+		})
+
+		// log.Printf("storing %s => %#v", condKey, res)
+		h.Cache.Set(condKey, res)
+		return
 	}
 
 	// log.Printf("storing %s => %#v", key, res)
-	if err := h.Cache.Set(key, res); err != nil {
-		log.Println(err)
-	}
-
-	writewg.Done()
+	h.Cache.Set(key, res)
 }
 
 func WaitForWrites() {
@@ -231,10 +202,11 @@ func (crw *cachedResponseWriter) WriteHeader(status int) {
 }
 
 func (crw *cachedResponseWriter) resource() *Resource {
-	return NewResource(
-		crw.req.Method,
-		crw.code,
-		crw.ResponseWriter.Header(),
-		bytes.NewReader(crw.recorder.Body.Bytes()),
-	)
+	return &Resource{
+		URL:        crw.req.URL,
+		StatusCode: crw.code,
+		Header:     crw.ResponseWriter.Header(),
+		Body:       bytes.NewReader(crw.recorder.Body.Bytes()),
+		Method:     crw.req.Method,
+	}
 }
