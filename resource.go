@@ -128,7 +128,7 @@ func (e *Resource) SharedFreshness(now time.Time) (time.Duration, error) {
 		return time.Duration(0), err
 	}
 
-	if cc.SMaxAge != nil && *cc.SMaxAge > freshness {
+	if cc.SMaxAge != nil {
 		return *cc.SMaxAge, nil
 	}
 
