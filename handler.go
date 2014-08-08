@@ -94,9 +94,17 @@ func (h *CacheHandler) cacheHit(res *Resource, rw http.ResponseWriter, r *http.R
 	rw.Header().Set(CacheHeader, "HIT")
 
 	if age, err := res.Age(h.NowFunc()); err != nil {
-		log.Printf("Error calculating age: %s", err)
+		log.Println("Error calculating age", err)
 	} else {
 		rw.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
+	}
+
+	if fresh, err := h.Cache.IsFresh(res, h.NowFunc()); err != nil {
+		log.Println("Error calculating freshness", err)
+	} else if !fresh {
+		rw.Header().Add("Warning", fmt.Sprintf(
+			"110 - %q %q", "Response is Stale", res.Header.Get("Date"),
+		))
 	}
 
 	t, _, _ := res.LastModified()

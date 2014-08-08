@@ -3,6 +3,7 @@ package httpcache
 import (
 	"fmt"
 	"net/http"
+	"time"
 )
 
 type Cache struct {
@@ -22,6 +23,33 @@ func NewPublicCache() *Cache {
 		Store:   NewMapStore(),
 		Private: false,
 	}
+}
+
+func (c *Cache) IsFresh(res *Resource, t time.Time) (ok bool, err error) {
+	var dur time.Duration
+
+	if c.Private {
+		dur, err = res.Freshness(t)
+		if err != nil {
+			return
+		}
+	} else {
+		dur, err = res.SharedFreshness(t)
+		if err != nil {
+			return
+		}
+	}
+
+	age, err := res.Age(t)
+	if err != nil {
+		return
+	}
+
+	if int(dur-age) > 0 {
+		return true, nil
+	}
+
+	return
 }
 
 func (c *Cache) IsStoreable(res *Resource) (bool, string, error) {

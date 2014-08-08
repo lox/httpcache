@@ -30,11 +30,13 @@ log.Fatal(http.ListenAndServe("127.0.0.1:8080", logger))
 
 - Revalidation
 - Vary support 
+- Handling of Authorized header
 - Better range support (with caching)
 - HEAD invalidation of GETs
 - Heuristic freshness
 - Staleness warnings
 - Corrected Age calculations
+- Caching non-GET with explicit validators
 
 ## Reading List
 

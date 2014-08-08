@@ -30,7 +30,7 @@ func TestUpstreamHeadersCopied(t *testing.T) {
 		testRequest{
 			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("X-Copied-Header", "Llamas")
-				defaultHandler.ServeHTTP(w, r)
+				defaultHandler().ServeHTTP(w, r)
 			}),
 			Request: NewRequest("GET", "http://example.org/test", nil),
 			AssertResponse: func(r *httptest.ResponseRecorder) {
@@ -79,7 +79,7 @@ func TestCacheHitWithHead(t *testing.T) {
 		testRequest{
 			Request:             NewRequest("HEAD", "http://example.org/test", nil),
 			AssertCacheStatus:   "HIT",
-			AssertContentLength: defaultHandler.SizeString(),
+			AssertContentLength: defaultHandler().SizeString(),
 			AssertResponse: func(r *httptest.ResponseRecorder) {
 				if r.Body.String() != "" {
 					t.Fatal("HEAD responses should have no body")
@@ -96,6 +96,10 @@ func TestCacheAge(t *testing.T) {
 		testRequest{
 			Request: NewRequest("GET", "http://example.org/test", nil),
 			Time:    testTime,
+			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Cache-Control", "max-age=172800")
+				defaultHandler().ServeHTTP(w, r)
+			}),
 		},
 		testRequest{
 			Request: NewRequest("GET", "http://example.org/test", nil),
@@ -124,7 +128,7 @@ func TestCacheControlUpstreamNoStore(t *testing.T) {
 			Request: NewRequest("GET", "http://example.org/test", nil),
 			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Cache-Control", "no-store, no-cache")
-				defaultHandler.ServeHTTP(w, r)
+				defaultHandler().ServeHTTP(w, r)
 			}),
 			AssertCacheStatus: "SKIP",
 		},
@@ -157,7 +161,7 @@ func TestConditionalResponses(t *testing.T) {
 			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Last-Modified", testTime.Format(http.TimeFormat))
 				w.Header().Set("ETag", "llamas-rock")
-				defaultHandler.ServeHTTP(w, r)
+				defaultHandler().ServeHTTP(w, r)
 			}),
 		},
 		testRequest{
@@ -194,7 +198,7 @@ func TestHopByHopHeadersNotSentUpstream(t *testing.T) {
 	requests := []testRequest{
 		testRequest{
 			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				defaultHandler.ServeHTTP(w, r)
+				defaultHandler().ServeHTTP(w, r)
 			}),
 			Request: NewRequest("GET", "http://example.org/test", http.Header{
 				"Connection": []string{"close"},
@@ -238,6 +242,32 @@ func TestCachingConditionalResponses(t *testing.T) {
 	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
+func TestStaleResponsesHaveWarnings(t *testing.T) {
+	requests := []testRequest{
+		testRequest{
+			Request: NewRequest("GET", "http://example.org/test", nil),
+			Time:    testTime,
+			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Cache-Control", "max=age=86400")
+				defaultHandler().ServeHTTP(w, r)
+			}),
+		},
+		testRequest{
+			Request: NewRequest("GET", "http://example.org/test", nil),
+			Time:    testTime.AddDate(0, 0, 2), // Add 2 day
+			AssertResponse: func(r *httptest.ResponseRecorder) {
+				w := r.HeaderMap.Get("Warning")
+				if !strings.HasPrefix(w, "110 - ") {
+					t.Fatalf("Expected a Warning 110 header, got %q", w)
+				}
+			},
+			AssertCacheStatus: "HIT",
+		},
+	}
+
+	runRequests(requests, NewPrivateCache(), assert.New(t))
+}
+
 func NewRequest(method string, url string, h http.Header) *http.Request {
 	r, err := http.NewRequest(method, url, strings.NewReader(""))
 	if err != nil {
@@ -249,15 +279,15 @@ func NewRequest(method string, url string, h http.Header) *http.Request {
 }
 
 type testHandler struct {
-	body        string
-	timeUpdated time.Time
+	body         string
+	responseTime time.Time
 }
 
 func (h *testHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
-	w.Header().Set("Date", testTime.Format(http.TimeFormat))
+	w.Header().Set("Date", h.responseTime.Format(http.TimeFormat))
 	b := []byte(h.body)
-	http.ServeContent(w, r, "", h.timeUpdated, bytes.NewReader(b))
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(b))
 }
 
 func (h *testHandler) Size() int {
@@ -268,8 +298,11 @@ func (h *testHandler) SizeString() string {
 	return strconv.Itoa(h.Size())
 }
 
-var defaultHandler *testHandler = &testHandler{
-	body: "default handler content",
+func defaultHandler() *testHandler {
+	return &testHandler{
+		body:         "default handler content",
+		responseTime: testTime,
+	}
 }
 
 func debugHandler(h http.Handler) http.Handler {
@@ -308,7 +341,11 @@ func (t *testRequest) applyDefaults() *testRequest {
 		t.AssertCode = http.StatusOK
 	}
 	if t.UpstreamHandler == nil {
-		t.UpstreamHandler = debugHandler(defaultHandler)
+		h := defaultHandler()
+		if !t.Time.IsZero() {
+			h.responseTime = t.Time
+		}
+		t.UpstreamHandler = debugHandler(h)
 	} else {
 		t.UpstreamHandler = debugHandler(t.UpstreamHandler)
 	}
