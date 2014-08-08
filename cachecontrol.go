@@ -112,6 +112,7 @@ func ParseCacheControl(s string) (cc CacheControl, err error) {
 				return cc, fmt.Errorf("Error parsing s-maxage: %s", err)
 			}
 			cc.SMaxAge = &d
+			cc.ProxyRevalidate = true
 		case "public":
 			cc.Public = true
 		case "private":
