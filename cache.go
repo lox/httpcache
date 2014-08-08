@@ -8,24 +8,27 @@ import (
 
 type Cache struct {
 	Store
-	Private bool
+	Private   bool
+	Validator *Validator
 }
 
 func NewPrivateCache() *Cache {
 	return &Cache{
-		Store:   NewMapStore(),
-		Private: true,
+		Store:     NewMapStore(),
+		Private:   true,
+		Validator: &Validator{http.DefaultTransport},
 	}
 }
 
 func NewPublicCache() *Cache {
 	return &Cache{
-		Store:   NewMapStore(),
-		Private: false,
+		Store:     NewMapStore(),
+		Private:   false,
+		Validator: &Validator{http.DefaultTransport},
 	}
 }
 
-func (c *Cache) IsFresh(res *Resource, t time.Time) (ok bool, err error) {
+func (c *Cache) IsFresh(req *http.Request, res *Resource, t time.Time) (ok bool, err error) {
 	var dur time.Duration
 
 	if c.Private {
@@ -38,6 +41,15 @@ func (c *Cache) IsFresh(res *Resource, t time.Time) (ok bool, err error) {
 		if err != nil {
 			return
 		}
+	}
+
+	reqCacheControl, err := ParseCacheControl(req.Header.Get(CacheControlHeader))
+	if err != nil {
+		return false, err
+	}
+
+	if reqCacheControl.MaxAge != nil {
+		dur = *reqCacheControl.MaxAge
 	}
 
 	age, err := res.Age(t)

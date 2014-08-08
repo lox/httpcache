@@ -105,16 +105,7 @@ func TestCacheAge(t *testing.T) {
 			Request: NewRequest("GET", "http://example.org/test", nil),
 			Time:    testTime.AddDate(0, 0, 1),
 			AssertResponse: func(r *httptest.ResponseRecorder) {
-				age := r.HeaderMap.Get("Age")
-				if age == "" {
-					t.Fatal("Expected Age header")
-				}
-
-				if ageInt, err := strconv.Atoi(age); err != nil {
-					t.Fatal(err)
-				} else if expect := 86400; ageInt != expect {
-					t.Fatalf("Age, expected %d, got %d", expect, ageInt)
-				}
+				assert.Equal(t, "86400", r.HeaderMap.Get("Age"))
 			},
 		},
 	}
@@ -141,17 +132,26 @@ func TestCacheControlUpstreamNoStore(t *testing.T) {
 	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
-func TestCacheControlRequestNoStore(t *testing.T) {
-	requests := []testRequest{
-		testRequest{
-			Request: NewRequest("GET", "http://example.org/test", http.Header{
-				"Cache-Control": []string{"no-cache"},
-			}),
-			AssertCacheStatus: "SKIP",
-		},
+func TestCacheControlRequest(t *testing.T) {
+	table := []struct {
+		cacheControl string
+		cacheStatus  string
+	}{
+		{"no-cache", "SKIP"},
 	}
 
-	runRequests(requests, NewPrivateCache(), assert.New(t))
+	for _, expect := range table {
+		requests := []testRequest{
+			testRequest{
+				Request: NewRequest("GET", "http://example.org/test", http.Header{
+					"Cache-Control": []string{expect.cacheControl},
+				}),
+				AssertCacheStatus: expect.cacheStatus,
+			},
+		}
+
+		runRequests(requests, NewPrivateCache(), assert.New(t))
+	}
 }
 
 func TestConditionalResponses(t *testing.T) {
@@ -242,30 +242,52 @@ func TestCachingConditionalResponses(t *testing.T) {
 	runRequests(requests, NewPrivateCache(), assert.New(t))
 }
 
-func TestStaleResponsesHaveWarnings(t *testing.T) {
-	requests := []testRequest{
-		testRequest{
-			Request: NewRequest("GET", "http://example.org/test", nil),
-			Time:    testTime,
-			UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Cache-Control", "max=age=86400")
-				defaultHandler().ServeHTTP(w, r)
-			}),
-		},
-		testRequest{
-			Request: NewRequest("GET", "http://example.org/test", nil),
-			Time:    testTime.AddDate(0, 0, 2), // Add 2 day
-			AssertResponse: func(r *httptest.ResponseRecorder) {
-				w := r.HeaderMap.Get("Warning")
-				if !strings.HasPrefix(w, "110 - ") {
-					t.Fatalf("Expected a Warning 110 header, got %q", w)
-				}
-			},
-			AssertCacheStatus: "HIT",
-		},
+func TestStaleResponses(t *testing.T) {
+	var table = []struct {
+		clientCacheControl, serverCacheControl string
+		hasWarning                             bool
+		age                                    time.Duration
+		status                                 string
+	}{
+		{"", "max-age=86400", true, time.Hour * 24, "HIT"},
+		{"", "max-age=86400", false, time.Hour * 14, "HIT"},
+		{"", "max-age=86400", false, time.Hour * 1, "HIT"},
+		{"max-age=30", "max-age=86400", true, time.Hour * 1, "HIT"},
 	}
 
-	runRequests(requests, NewPrivateCache(), assert.New(t))
+	for _, expect := range table {
+		requests := []testRequest{
+			testRequest{
+				Request: NewRequest("GET", "http://example.org/test", http.Header{
+					"Cache-Control": []string{expect.clientCacheControl},
+				}),
+				Time: testTime,
+				UpstreamHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Cache-Control", expect.serverCacheControl)
+					defaultHandler().ServeHTTP(w, r)
+				}),
+			},
+			testRequest{
+				Request: NewRequest("GET", "http://example.org/test", http.Header{
+					"Cache-Control": []string{expect.clientCacheControl},
+				}),
+				Time: testTime.Add(expect.age),
+				AssertResponse: func(r *httptest.ResponseRecorder) {
+					w := r.HeaderMap.Get("Warning")
+					if !strings.HasPrefix(w, "110 - ") && expect.hasWarning {
+						t.Fatalf("Expected a Warning 110 header, got %q", w)
+					} else if strings.HasPrefix(w, "110 - ") && !expect.hasWarning {
+						t.Fatalf("Expected no Warning header, got %q", w)
+					}
+					assert.Equal(t, r.HeaderMap.Get("Age"),
+						fmt.Sprintf("%.f", expect.age.Seconds()))
+				},
+				AssertCacheStatus: expect.status,
+			},
+		}
+
+		runRequests(requests, NewPrivateCache(), assert.New(t))
+	}
 }
 
 func NewRequest(method string, url string, h http.Header) *http.Request {
