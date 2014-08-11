@@ -1,41 +1,54 @@
 package httpcache
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestCacheControl(t *testing.T) {
-	cc, err := ParseCacheControl(`public, private="set-cookie", max-age=100`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assert.Equal(t, true, cc.Public)
-	assert.Equal(t, false, cc.Private)
-	assert.Equal(t, time.Second*100, *cc.MaxAge)
-	assert.Equal(t, []string{"Set-Cookie"}, cc.PrivateFields)
+func durationRef(d time.Duration) *time.Duration {
+	return &d
 }
 
-func TestCacheControlParsingQuotes(t *testing.T) {
-	cc, err := ParseCacheControl(` foo="max-age=8",  public`)
-	if err != nil {
-		t.Fatal(err)
+func TestParsingCacheControl(t *testing.T) {
+	table := []struct {
+		ccString string
+		ccStruct CacheControl
+	}{
+		{`public, private="set-cookie", max-age=100`, CacheControl{
+			Public:        true,
+			PrivateFields: []string{"Set-Cookie"},
+			MaxAge:        durationRef(time.Second * 100),
+		}},
+		{` foo="max-age=8",  public`, CacheControl{
+			Public: true,
+			Extension: map[string][]string{
+				"foo": []string{"max-age=8"},
+			},
+		}},
+		{`s-maxage=86400`, CacheControl{
+			SMaxAge:         durationRef(time.Second * 86400),
+			ProxyRevalidate: true,
+		}},
+		{`max-stale`, CacheControl{
+			MaxStale:    true,
+			MaxStaleAge: nil,
+		}},
+		{`max-stale=60`, CacheControl{
+			MaxStale:    true,
+			MaxStaleAge: durationRef(time.Second * 60),
+		}},
 	}
 
-	assert.Equal(t, []string{"max-age=8"}, cc.Extension["foo"])
-	assert.Equal(t, true, cc.Public)
-}
+	for i, expect := range table {
+		cc, err := ParseCacheControl(expect.ccString)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-// http://httpwg.github.io/specs/rfc7234.html#rfc.section.5.2.2.9
-func TestCacheControlSMaxAgeImpliesProxyRevalidate(t *testing.T) {
-	cc, err := ParseCacheControl(`s-maxage=86400`)
-	if err != nil {
-		t.Fatal(err)
+		require.Equal(t, cc.String(), expect.ccStruct.String(),
+			fmt.Sprintf("Failed to parse #%d: %q", i+1, expect.ccString))
 	}
-
-	assert.Equal(t, 86400, cc.SMaxAge.Seconds())
-	assert.Equal(t, true, cc.ProxyRevalidate)
 }

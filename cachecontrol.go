@@ -1,8 +1,10 @@
 package httpcache
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -103,7 +105,7 @@ func ParseCacheControl(s string) (cc CacheControl, err error) {
 			}
 			cc.MinFresh = &d
 		case "only-if-cached":
-			cc.NoCache = true
+			cc.OnlyIfCached = true
 		case "s-max-age":
 			fallthrough
 		case "s-maxage":
@@ -137,6 +139,105 @@ func ParseCacheControl(s string) (cc CacheControl, err error) {
 	}
 
 	return
+}
+
+func (cc *CacheControl) fields() []string {
+	typ := reflect.TypeOf(*cc)
+	fields := []string{}
+
+	for i := 0; i < typ.NumField(); i++ {
+		p := typ.Field(i)
+		if !p.Anonymous {
+			fields = append(fields, p.Name)
+		}
+	}
+
+	return fields
+}
+
+func (cc *CacheControl) String() string {
+	buf := &bytes.Buffer{}
+
+	for _, field := range cc.fields() {
+		switch field {
+		case "NoCache":
+			if cc.NoCache {
+				buf.WriteString("no-cache, ")
+			}
+		case "NoStore":
+			if cc.NoStore {
+				buf.WriteString("no-store, ")
+			}
+		case "NoTransform":
+			if cc.NoTransform {
+				buf.WriteString("no-transform, ")
+			}
+		case "Extension":
+			if cc.Extension != nil {
+				for k, vals := range cc.Extension {
+					for _, val := range vals {
+						buf.WriteString(fmt.Sprintf("%s=%q, ", k, val))
+					}
+				}
+			}
+		case "MaxAge":
+			if cc.MaxAge != nil {
+				buf.WriteString(fmt.Sprintf("max-age=%.f, ", cc.MaxAge.Seconds()))
+			}
+		case "MaxStale":
+			if cc.MaxStale {
+				buf.WriteString("max-stale, ")
+			}
+		case "MaxStaleAge":
+			if cc.MaxStaleAge != nil {
+				buf.WriteString(fmt.Sprintf("max-stale=%.f, ", cc.MaxStaleAge.Seconds()))
+			}
+		case "MinFresh":
+			if cc.MinFresh != nil {
+				buf.WriteString(fmt.Sprintf("max-stale=%.f, ", cc.MinFresh.Seconds()))
+			}
+		case "OnlyIfCached":
+			if cc.OnlyIfCached {
+				buf.WriteString("only-if-cached, ")
+			}
+		case "SMaxAge":
+			if cc.SMaxAge != nil {
+				buf.WriteString(fmt.Sprintf("max-stale=%.f, ", cc.SMaxAge.Seconds()))
+			}
+		case "Public":
+			if cc.Public {
+				buf.WriteString("public, ")
+			}
+		case "Private":
+			if cc.Public {
+				buf.WriteString("private, ")
+			}
+		case "PrivateFields":
+			if cc.PrivateFields != nil {
+				for _, v := range cc.PrivateFields {
+					buf.WriteString(fmt.Sprintf("private=%q, ", v))
+				}
+			}
+		case "NoCacheFields":
+			if cc.NoCacheFields != nil {
+				for _, v := range cc.NoCacheFields {
+					buf.WriteString(fmt.Sprintf("no-cache=%q, ", v))
+				}
+			}
+		case "MustRevalidate":
+			if cc.MustRevalidate {
+				buf.WriteString("must-revalidate, ")
+			}
+		case "ProxyRevalidate":
+			if cc.ProxyRevalidate {
+				buf.WriteString("proxy-revalidate, ")
+			}
+		default:
+			panic(field + " not implemented in String()")
+		}
+	}
+
+	return strings.TrimSuffix(buf.String(), ", ")
 }
 
 const (
