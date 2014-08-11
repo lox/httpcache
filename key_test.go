@@ -23,13 +23,6 @@ func TestKeysDiffer(t *testing.T) {
 	assert.NotEqual(t, k1, k2)
 }
 
-func TestHeadIsTheSameAsGet(t *testing.T) {
-	k1 := Key("GET", mustParseUrl("http://x.org/test"))
-	k2 := Key("HEAD", mustParseUrl("http://x.org/test"))
-
-	assert.Equal(t, k1, k2)
-}
-
 func TestSecondaryKeysDiffer(t *testing.T) {
 	k1 := Key("GET", mustParseUrl("http://x.org/test"))
 	k2 := SecondaryKey(Key("GET", mustParseUrl("http://x.org/test")), http.Header{

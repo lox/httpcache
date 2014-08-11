@@ -28,24 +28,26 @@ func NewPublicCache() *Cache {
 	}
 }
 
-func (c *Cache) IsFresh(req *http.Request, res *Resource, t time.Time) (ok bool, err error) {
+func (c *Cache) IsFresh(req *http.Request, res *Resource, t time.Time) (ok bool, msg string, err error) {
 	var dur time.Duration
 
 	if c.Private {
 		dur, err = res.Freshness(t)
 		if err != nil {
+			msg = "Failed to determine freshness: " + err.Error()
 			return
 		}
 	} else {
 		dur, err = res.SharedFreshness(t)
 		if err != nil {
+			msg = "Failed to determine freshness: " + err.Error()
 			return
 		}
 	}
 
 	reqCacheControl, err := ParseCacheControl(req.Header.Get(CacheControlHeader))
 	if err != nil {
-		return false, err
+		return false, "Failed to parse Cache-Control: " + err.Error(), err
 	}
 
 	if reqCacheControl.MaxAge != nil {
@@ -54,14 +56,15 @@ func (c *Cache) IsFresh(req *http.Request, res *Resource, t time.Time) (ok bool,
 
 	age, err := res.Age(t)
 	if err != nil {
+		msg = "Failed to parse Age: " + err.Error()
 		return
 	}
 
-	if int(dur-age) > 0 {
-		return true, nil
+	if remaining := int(dur - age); remaining > 0 {
+		return true, fmt.Sprintf("%d seconds remaining", remaining), nil
 	}
 
-	return
+	return false, "No freshness indicators", nil
 }
 
 func (c *Cache) IsStoreable(res *Resource) (bool, string, error) {
@@ -120,6 +123,12 @@ func (c *Cache) IsRequestCacheable(req *http.Request) (bool, string, error) {
 	cc, err := ParseCacheControl(req.Header.Get(CacheControlHeader))
 	if err != nil {
 		return false, err.Error(), err
+	}
+
+	// BUG(lox) technically anything with explicity freshness headers
+	// can be cached, but we don't support it yet
+	if req.Method != "GET" && req.Method != "HEAD" {
+		return false, "Non-GET/HEAD requests not cached", nil
 	}
 
 	if cc.NoCache {

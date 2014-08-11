@@ -5,6 +5,7 @@ import "sync"
 type Store interface {
 	Get(key string) (*Resource, bool)
 	Set(key string, r *Resource)
+	Delete(key string)
 }
 
 type MapStore struct {
@@ -27,4 +28,10 @@ func (m *MapStore) Set(k string, r *Resource) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.resources[k] = r
+}
+
+func (m *MapStore) Delete(k string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	delete(m.resources, k)
 }

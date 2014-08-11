@@ -1,7 +1,6 @@
 package httpcache
 
 import (
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -27,7 +26,7 @@ type logRecord struct {
 	cacheStatus           string
 }
 
-func (r *logRecord) Log(logger *log.Logger) {
+func (r *logRecord) Log() {
 	cacheStatus := r.cacheStatus
 
 	if strings.HasPrefix(cacheStatus, "HIT") {
@@ -38,7 +37,7 @@ func (r *logRecord) Log(logger *log.Logger) {
 		cacheStatus = "\x1b[33;1mSKIP\x1b[0m"
 	}
 
-	logger.Printf(
+	log.Printf(
 		"%s \"%s %s %s\" (%s) %d %s %s",
 		r.ip,
 		r.method,
@@ -65,13 +64,11 @@ func (r *logRecord) WriteHeader(status int) {
 
 type loggingHandler struct {
 	handler http.Handler
-	logger  *log.Logger
 }
 
-func NewLogger(out io.Writer, h http.Handler) http.Handler {
+func NewLogger(h http.Handler) http.Handler {
 	return &loggingHandler{
 		handler: h,
-		logger:  log.New(out, "", log.LstdFlags),
 	}
 }
 
@@ -109,7 +106,7 @@ func (h *loggingHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	record.time = finishTime.UTC()
 	record.elapsedTime = finishTime.Sub(startTime)
-	record.Log(h.logger)
+	record.Log()
 }
 
 func WriteLogHeaders(req *http.Request) {

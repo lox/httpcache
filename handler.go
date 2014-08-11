@@ -6,13 +6,14 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
-	"time"
 )
 
 const (
-	CacheHeader      = "X-Cache"
-	CacheDebugHeader = "X-Cache-Debug"
+	CacheHeader          = "X-Cache"
+	CacheDebugHeader     = "X-Cache-Debug"
+	CacheFreshnessHeader = "X-Cache-Freshness"
 )
 
 var writewg sync.WaitGroup
@@ -20,7 +21,6 @@ var writewg sync.WaitGroup
 type CacheHandler struct {
 	Handler http.Handler
 	Cache   *Cache
-	NowFunc func() time.Time
 	Debug   bool
 }
 
@@ -28,13 +28,15 @@ func NewHandler(c *Cache, h http.Handler) http.Handler {
 	return &CacheHandler{
 		Handler: h,
 		Cache:   c,
-		NowFunc: func() time.Time {
-			return time.Now()
-		},
 	}
 }
 
 func (h *CacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" {
+		writewg.Add(1)
+		go h.invalidate(r.URL)
+	}
+
 	ok, reason, _ := h.Cache.IsRequestCacheable(r)
 	if !ok {
 		h.cacheSkip(rw, r)
@@ -43,27 +45,25 @@ func (h *CacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	key := Key(r.Method, r.URL)
-
 	if res, ok := h.Cache.Get(key); ok {
-		// log.Printf("cache hit on %s", key)
 		h.cacheHit(res, rw, r)
 		return
 	}
 
-	// log.Printf("cache miss on %s", key)
-
-	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
-		condKey := SecondaryKey(key, http.Header{
-			"If-None-Match": []string{ifNoneMatch},
-		})
-
-		if res, ok := h.Cache.Get(condKey); ok {
-			// log.Printf("cache hit on %s", condKey)
+	// Head requests can be served from cached GET's
+	if r.Method == "HEAD" {
+		if res, ok := h.Cache.Get(Key("GET", r.URL)); ok {
 			h.cacheHit(res, rw, r)
 			return
 		}
+	}
 
-		// log.Printf("cache miss on %s", condKey)
+	cc, err := ParseCacheControl(r.Header.Get(CacheControlHeader))
+	if err == nil {
+		if cc.OnlyIfCached {
+			http.Error(rw, "No cached resource found",
+				http.StatusGatewayTimeout)
+		}
 	}
 
 	h.cacheMiss(rw, r)
@@ -93,19 +93,22 @@ func (h *CacheHandler) cacheHit(res *Resource, rw http.ResponseWriter, r *http.R
 
 	rw.Header().Set(CacheHeader, "HIT")
 
-	if age, err := res.Age(h.NowFunc()); err != nil {
+	if age, err := res.Age(Now()); err != nil {
 		log.Println("Error calculating age", err)
 	} else {
 		rw.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
 	}
 
-	if fresh, err := h.Cache.IsFresh(r, res, h.NowFunc()); err != nil {
+	fresh, msg, err := h.Cache.IsFresh(r, res, Now())
+	if err != nil {
 		log.Println("Error calculating freshness", err)
 	} else if !fresh {
 		rw.Header().Add("Warning", fmt.Sprintf(
 			"110 - %q %q", "Response is Stale", res.Header.Get("Date"),
 		))
 	}
+
+	rw.Header().Add(CacheFreshnessHeader, msg)
 
 	t, _, _ := res.LastModified()
 	http.ServeContent(rw, r, "", t, res.Body)
@@ -157,23 +160,19 @@ func (h *CacheHandler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 	h.Handler.ServeHTTP(rw, r)
 }
 
+func (h *CacheHandler) invalidate(u *url.URL) {
+	defer writewg.Done()
+
+	h.Cache.Delete(Key("GET", u))
+	h.Cache.Delete(Key("HEAD", u))
+}
+
 func (h *CacheHandler) store(req *http.Request, res *Resource) {
 	defer writewg.Done()
 
 	key := RequestKey(req)
-
-	// store with a conditional key
-	if ifNoneMatch := req.Header.Get("If-None-Match"); ifNoneMatch != "" {
-		condKey := SecondaryKey(key, http.Header{
-			"If-None-Match": []string{ifNoneMatch},
-		})
-
-		// log.Printf("storing %s => %#v", condKey, res)
-		h.Cache.Set(condKey, res)
-		return
-	}
-
-	// log.Printf("storing %s => %#v", key, res)
+	// log.Printf("storing %s", key)
+	// res.Dump(false)
 	h.Cache.Set(key, res)
 }
 
@@ -202,7 +201,6 @@ func (crw *cachedResponseWriter) WriteHeader(status int) {
 	if ok, reason, _ := crw.cache.IsCacheable(crw.resource()); !ok {
 		crw.ResponseWriter.Header().Set(CacheHeader, "SKIP")
 		crw.ResponseWriter.Header().Set(CacheDebugHeader, reason)
-
 	}
 
 	crw.recorder.WriteHeader(status)

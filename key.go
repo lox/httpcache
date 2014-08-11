@@ -12,10 +12,6 @@ import (
 // is being requested. The request method and url are taken into
 // account and canonicalized, the result is a hash of the inputs
 func Key(method string, u *url.URL) string {
-	if method == "HEAD" {
-		method = "GET"
-	}
-
 	return fmt.Sprintf("%s:%s",
 		method, strings.ToLower(CanonicalUrl(u).String()))
 }
