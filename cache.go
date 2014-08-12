@@ -8,27 +8,24 @@ import (
 
 type Cache struct {
 	Store
-	Private   bool
-	Validator *Validator
+	Private bool
 }
 
 func NewPrivateCache() *Cache {
 	return &Cache{
-		Store:     NewMapStore(),
-		Private:   true,
-		Validator: &Validator{http.DefaultTransport},
+		Store:   NewMapStore(),
+		Private: true,
 	}
 }
 
 func NewPublicCache() *Cache {
 	return &Cache{
-		Store:     NewMapStore(),
-		Private:   false,
-		Validator: &Validator{http.DefaultTransport},
+		Store:   NewMapStore(),
+		Private: false,
 	}
 }
 
-func (c *Cache) IsFresh(req *http.Request, res *Resource, t time.Time) (ok bool, msg string, err error) {
+func (c *Cache) IsFresh(req *http.Request, res *Resource, t time.Time) (ok bool, stale time.Duration, msg string, err error) {
 	var dur time.Duration
 
 	if c.Private {
@@ -47,11 +44,11 @@ func (c *Cache) IsFresh(req *http.Request, res *Resource, t time.Time) (ok bool,
 
 	reqCacheControl, err := ParseCacheControl(req.Header.Get(CacheControlHeader))
 	if err != nil {
-		return false, "Failed to parse Cache-Control: " + err.Error(), err
+		return false, 0, "Failed to parse Cache-Control: " + err.Error(), err
 	}
 
-	if reqCacheControl.MaxAge != nil {
-		dur = *reqCacheControl.MaxAge
+	if reqCacheControl.Has("max-age") {
+		dur, _ = reqCacheControl.Duration("max-age")
 	}
 
 	age, err := res.Age(t)
@@ -60,11 +57,11 @@ func (c *Cache) IsFresh(req *http.Request, res *Resource, t time.Time) (ok bool,
 		return
 	}
 
-	if remaining := int(dur - age); remaining > 0 {
-		return true, fmt.Sprintf("%d seconds remaining", remaining), nil
-	}
+	stale = age - dur
+	ok = stale <= 0
+	msg = fmt.Sprintf("Stale by %.fs", stale.Seconds())
 
-	return false, "No freshness indicators", nil
+	return
 }
 
 func (c *Cache) IsStoreable(res *Resource) (bool, string, error) {
@@ -77,11 +74,11 @@ func (c *Cache) IsStoreable(res *Resource) (bool, string, error) {
 		return false, err.Error(), err
 	}
 
-	if cc.NoStore {
+	if cc.Has("no-store") {
 		return false, "Response contained no-store", err
 	}
 
-	if cc.Private && !c.Private {
+	if cc.Has("private") && !c.Private {
 		return false, "Response is private", nil
 	}
 
@@ -94,7 +91,7 @@ func (c *Cache) IsCacheable(res *Resource) (bool, string, error) {
 		return false, err.Error(), err
 	}
 
-	if cc.NoCache {
+	if cc.Has("no-cache") {
 		return false, "Response contained no-cache", err
 	}
 
@@ -131,7 +128,7 @@ func (c *Cache) IsRequestCacheable(req *http.Request) (bool, string, error) {
 		return false, "Non-GET/HEAD requests not cached", nil
 	}
 
-	if cc.NoCache {
+	if cc.Has("no-cache") {
 		return false, "Request contains no-cache", nil
 	}
 

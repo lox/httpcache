@@ -60,7 +60,7 @@ func (h *CacheHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	cc, err := ParseCacheControl(r.Header.Get(CacheControlHeader))
 	if err == nil {
-		if cc.OnlyIfCached {
+		if cc.Has("only-if-cached") {
 			http.Error(rw, "No cached resource found",
 				http.StatusGatewayTimeout)
 		}
@@ -85,29 +85,40 @@ func (h *CacheHandler) cacheSkip(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CacheHandler) cacheHit(res *Resource, rw http.ResponseWriter, r *http.Request) {
+	log.Printf("%s", Now().String())
+
+	age, err := res.Age(Now())
+	if err != nil && serverError(err, rw) {
+		return
+	}
+
+	// var maxStale = time.Duration(0)
+	// cc, err := ParseCacheControl(r.Header.Get(CacheControlHeader))
+	// if err == nil {
+	// 	if cc.Has("max-stale") {
+	// 		maxStale, _ = cc.Duration("max-stale")
+	// 	}
+	// }
+
+	fresh, _, msg, err := h.Cache.IsFresh(r, res, Now())
+	if err != nil {
+		log.Println("Error calculating freshness", err)
+	}
+
+	if !fresh {
+		rw.Header().Add("Warning", fmt.Sprintf(
+			"110 - %q %q", "Response is Stale", res.Header.Get("Date"),
+		))
+	}
+
 	for key, headers := range res.Header {
 		for _, value := range headers {
 			rw.Header().Set(key, value)
 		}
 	}
 
+	rw.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
 	rw.Header().Set(CacheHeader, "HIT")
-
-	if age, err := res.Age(Now()); err != nil {
-		log.Println("Error calculating age", err)
-	} else {
-		rw.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
-	}
-
-	fresh, msg, err := h.Cache.IsFresh(r, res, Now())
-	if err != nil {
-		log.Println("Error calculating freshness", err)
-	} else if !fresh {
-		rw.Header().Add("Warning", fmt.Sprintf(
-			"110 - %q %q", "Response is Stale", res.Header.Get("Date"),
-		))
-	}
-
 	rw.Header().Add(CacheFreshnessHeader, msg)
 
 	t, _, _ := res.LastModified()

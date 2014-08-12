@@ -1,10 +1,11 @@
-package httpcache
+package httpcache_test
 
 import (
-	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
+	. "github.com/lox/httpcache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,37 +19,43 @@ func TestParsingCacheControl(t *testing.T) {
 		ccStruct CacheControl
 	}{
 		{`public, private="set-cookie", max-age=100`, CacheControl{
-			Public:        true,
-			PrivateFields: []string{"Set-Cookie"},
-			MaxAge:        durationRef(time.Second * 100),
+			"public":  []string{},
+			"private": []string{"set-cookie"},
+			"max-age": []string{"100"},
 		}},
-		{` foo="max-age=8",  public`, CacheControl{
-			Public: true,
-			Extension: map[string][]string{
-				"foo": []string{"max-age=8"},
-			},
+		{` foo="max-age=8, space",  public`, CacheControl{
+			"public": []string{},
+			"foo":    []string{"max-age=8, space"},
 		}},
 		{`s-maxage=86400`, CacheControl{
-			SMaxAge:         durationRef(time.Second * 86400),
-			ProxyRevalidate: true,
+			"s-maxage": []string{"86400"},
 		}},
 		{`max-stale`, CacheControl{
-			MaxStale:    true,
-			MaxStaleAge: nil,
+			"max-stale": []string{},
 		}},
 		{`max-stale=60`, CacheControl{
-			MaxStale:    true,
-			MaxStaleAge: durationRef(time.Second * 60),
+			"max-stale": []string{"60"},
 		}},
 	}
 
-	for i, expect := range table {
-		cc, err := ParseCacheControl(expect.ccString)
+	for _, expect := range table {
+		cc1, err := ParseCacheControl(expect.ccString)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		require.Equal(t, cc.String(), expect.ccStruct.String(),
-			fmt.Sprintf("Failed to parse #%d: %q", i+1, expect.ccString))
+		if !reflect.DeepEqual(cc1, expect.ccStruct) {
+			t.Fatalf("%#v != %#v", cc1, expect.ccStruct)
+		}
+
+		require.NotEmpty(t, cc1.String())
+		cc2, err := ParseCacheControl(cc1.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !reflect.DeepEqual(cc1, cc2) {
+			t.Fatalf("%#v != %#v", cc1, cc2)
+		}
 	}
 }

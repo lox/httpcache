@@ -170,10 +170,10 @@ func TestStaleResponses(t *testing.T) {
 		age                                    time.Duration
 		status1, status2                       string
 	}{
-		{"", "max-age=86400", true, time.Hour * 24, "MISS", "HIT"},
-		{"", "max-age=86400", false, time.Hour * 14, "MISS", "HIT"},
-		{"", "max-age=86400", false, time.Hour * 1, "MISS", "HIT"},
-		{"max-age=30", "max-age=86400", true, time.Hour * 1, "MISS", "HIT"},
+		{"max-stale=86400", "max-age=86400", true, time.Hour * 24, "MISS", "HIT"},
+		{"max-stale=86400", "max-age=86400", false, time.Hour * 14, "MISS", "HIT"},
+		{"max-stale=86400", "max-age=86400", false, time.Hour * 1, "MISS", "HIT"},
+		{"max-age=30, max-stale=86400", "max-age=86400", true, time.Hour * 1, "MISS", "HIT"},
 	}
 
 	for i, req := range table {
@@ -211,6 +211,46 @@ func TestStaleResponses(t *testing.T) {
 	}
 }
 
+func TestValidation(t *testing.T) {
+	myTime := testTime
+
+	httpcache.Now = func() time.Time {
+		return myTime
+	}
+
+	reqs := []struct {
+		method, url, status string
+		age                 time.Duration
+	}{
+		{"GET", "http://example.org/test", "MISS", time.Hour * 2},
+		{"GET", "http://example.org/test", "MISS", time.Hour * 2},
+	}
+
+	upstream := NewUpstream(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Date", myTime.Format(http.TimeFormat))
+		w.Header().Set("Cache-Control", "max-age=60")
+		http.ServeContent(w, r, "", time.Time{}, strings.NewReader("content"))
+	})
+	ht := NewHandlerTest(t, upstream)
+
+	// ht.Cache.Validator = &httpcache.Validator{&testTransport{
+	// 	func(w http.ResponseWriter, r *http.Request) {
+	// 		w.Header().Set("Date", myTime.Format(http.TimeFormat))
+	// 		w.Header().Set("Cache-Control", "max-age=60")
+	// 		http.ServeContent(w, r, "", time.Time{}, strings.NewReader("content"))
+	// 	}}}
+
+	for i, req := range reqs {
+		myTime = myTime.Add(req.age)
+
+		resp := ht.Request(req.method, req.url, nil)
+		assert.Equal(t, req.status, resp.Header.Get("X-Cache"),
+			fmt.Sprintf("#%d %+v", i+1, req))
+
+		dumpResponse(resp)
+	}
+}
+
 func dumpResponse(resp *http.Response) {
 	b, _ := httputil.DumpResponse(resp, false)
 	log.Printf("%s", b)
@@ -224,6 +264,16 @@ type HandlerTest struct {
 	Handler http.Handler
 	Cache   *httpcache.Cache
 	t       *testing.T
+}
+
+type testTransport struct {
+	http.Handler
+}
+
+func (t *testTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusNotImplemented,
+	}, nil
 }
 
 func NewUpstream(h func(w http.ResponseWriter, r *http.Request)) *Upstream {

@@ -3,9 +3,6 @@ package httpcache
 import (
 	"bytes"
 	"fmt"
-	"net/http"
-	"reflect"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -14,331 +11,87 @@ const (
 	CacheControlHeader = "Cache-Control"
 )
 
-type CacheControl struct {
-	// common directives
-	NoCache     bool
-	NoStore     bool
-	NoTransform bool
-	Extension   map[string][]string
-	MaxAge      *time.Duration
+type CacheControl map[string][]string
 
-	// request directives
-	MaxStale     bool
-	MaxStaleAge  *time.Duration
-	MinFresh     *time.Duration
-	OnlyIfCached bool
+func ParseCacheControl(input string) (CacheControl, error) {
+	cc := make(CacheControl)
+	length := len(input)
 
-	// response directives
-	SMaxAge         *time.Duration
-	Public          bool
-	Private         bool
-	PrivateFields   []string
-	NoCacheFields   []string
-	MustRevalidate  bool
-	ProxyRevalidate bool
-}
+	var inToken, inQuote bool
+	var offset int
 
-// ParseCacheControl parses a RFC2616 Cache-Control header
-func ParseCacheControl(s string) (cc CacheControl, err error) {
-	cc = CacheControl{
-		Extension: map[string][]string{},
-	}
+	// split the string into tokens key=value
+	for i := 0; i < length; i++ {
+		c := input[i]
 
-	if s == "" {
-		return
-	}
-
-	lexer := ccLexer{
-		input: s,
-		width: len(s),
-	}
-
-	noValues := map[string]bool{
-		"public":           true,
-		"no-store":         true,
-		"no-transform":     true,
-		"must-revalidate":  true,
-		"proxy-revalidate": true,
-		"only-if-cached":   true,
-	}
-
-	for directive := range lexer.Lex() {
-		if val := noValues[directive.key]; val && directive.value != "" {
-			return cc, fmt.Errorf("Directive %s shouldn't have a value", directive.key)
-		}
-
-		switch directive.key {
-		case "no-cache":
-			if directive.value != "" {
-				k := http.CanonicalHeaderKey(directive.value)
-				if cc.NoCacheFields == nil {
-					cc.NoCacheFields = []string{k}
-				} else {
-					cc.NoCacheFields = append(cc.NoCacheFields, k)
-				}
-			} else {
-				cc.NoCache = true
-			}
-		case "no-store":
-			cc.NoStore = true
-		case "no-transform":
-			cc.NoTransform = true
-		case "max-age":
-			d, err := directive.Seconds()
-			if err != nil {
-				return cc, fmt.Errorf("Error parsing max-age: %s", err)
-			}
-			cc.MaxAge = &d
-		case "max-stale":
-			cc.MaxStale = true
-			if directive.value != "" {
-				d, err := directive.Seconds()
-				if err != nil {
-					return cc, fmt.Errorf("Error parsing max-stale: %s", err)
-				}
-				cc.MaxStaleAge = &d
-			}
-		case "min-fresh":
-			d, err := directive.Seconds()
-			if err != nil {
-				return cc, fmt.Errorf("Error parsing min-fresh: %s", err)
-			}
-			cc.MinFresh = &d
-		case "only-if-cached":
-			cc.OnlyIfCached = true
-		case "s-max-age":
-			fallthrough
-		case "s-maxage":
-			d, err := directive.Seconds()
-			if err != nil {
-				return cc, fmt.Errorf("Error parsing s-maxage: %s", err)
-			}
-			cc.SMaxAge = &d
-			cc.ProxyRevalidate = true
-		case "public":
-			cc.Public = true
-		case "private":
-			if directive.value != "" {
-				k := http.CanonicalHeaderKey(directive.value)
-				if cc.PrivateFields == nil {
-					cc.PrivateFields = []string{k}
-				} else {
-					cc.PrivateFields = append(cc.PrivateFields, k)
-				}
-			} else {
-				cc.Private = true
-			}
-		default:
-			_, ok := cc.Extension[directive.key]
-			if ok {
-				cc.Extension[directive.key] = append(cc.Extension[directive.key], directive.value)
-			} else {
-				cc.Extension[directive.key] = []string{directive.value}
-			}
+		if inToken && c == ',' && !inQuote {
+			addToken(cc, input[offset:i])
+			inToken = false
+		} else if inToken && c == '"' && i > 0 && input[i-1] == '=' {
+			inQuote = true
+		} else if !inToken && (c != ',' && c != ' ') {
+			inToken = true
+			offset = i
+		} else if inToken && inQuote && c == '"' {
+			addToken(cc, input[offset:i+1])
+			inToken = false
 		}
 	}
 
-	return
-}
-
-func (cc *CacheControl) fields() []string {
-	typ := reflect.TypeOf(*cc)
-	fields := []string{}
-
-	for i := 0; i < typ.NumField(); i++ {
-		p := typ.Field(i)
-		if !p.Anonymous {
-			fields = append(fields, p.Name)
-		}
+	// process leftovers
+	if offset < length {
+		addToken(cc, input[offset:length])
 	}
 
-	return fields
+	return cc, nil
 }
 
-func (cc *CacheControl) String() string {
-	buf := &bytes.Buffer{}
+func addToken(cc CacheControl, input string) {
+	var key, val string
 
-	for _, field := range cc.fields() {
-		switch field {
-		case "NoCache":
-			if cc.NoCache {
-				buf.WriteString("no-cache, ")
+	if idx := strings.Index(input, "="); idx != -1 {
+		key = input[0:idx]
+		val = strings.Trim(input[idx+1:], `"`)
+	} else {
+		key = input
+	}
+
+	cc.Add(key, val)
+}
+
+func (cc CacheControl) Add(key, val string) {
+	if !cc.Has(key) {
+		cc[key] = []string{}
+	}
+	if val != "" {
+		cc[key] = append(cc[key], val)
+	}
+}
+
+func (cc CacheControl) Has(key string) bool {
+	_, exists := cc[key]
+	return exists
+}
+
+func (cc CacheControl) Duration(key string) (time.Duration, error) {
+	return time.Duration(0), nil
+}
+
+func (cc CacheControl) String() string {
+	buf := bytes.Buffer{}
+
+	for k, vals := range cc {
+		if len(vals) == 0 {
+			buf.WriteString(k + ", ")
+		}
+		for _, val := range vals {
+			if strings.ContainsAny(val, `,"= `) {
+				buf.WriteString(fmt.Sprintf("%s=%q, ", k, val))
+			} else if val != "" {
+				buf.WriteString(fmt.Sprintf("%s=%s, ", k, val))
 			}
-		case "NoStore":
-			if cc.NoStore {
-				buf.WriteString("no-store, ")
-			}
-		case "NoTransform":
-			if cc.NoTransform {
-				buf.WriteString("no-transform, ")
-			}
-		case "Extension":
-			if cc.Extension != nil {
-				for k, vals := range cc.Extension {
-					for _, val := range vals {
-						buf.WriteString(fmt.Sprintf("%s=%q, ", k, val))
-					}
-				}
-			}
-		case "MaxAge":
-			if cc.MaxAge != nil {
-				buf.WriteString(fmt.Sprintf("max-age=%.f, ", cc.MaxAge.Seconds()))
-			}
-		case "MaxStale":
-			if cc.MaxStale {
-				buf.WriteString("max-stale, ")
-			}
-		case "MaxStaleAge":
-			if cc.MaxStaleAge != nil {
-				buf.WriteString(fmt.Sprintf("max-stale=%.f, ", cc.MaxStaleAge.Seconds()))
-			}
-		case "MinFresh":
-			if cc.MinFresh != nil {
-				buf.WriteString(fmt.Sprintf("max-stale=%.f, ", cc.MinFresh.Seconds()))
-			}
-		case "OnlyIfCached":
-			if cc.OnlyIfCached {
-				buf.WriteString("only-if-cached, ")
-			}
-		case "SMaxAge":
-			if cc.SMaxAge != nil {
-				buf.WriteString(fmt.Sprintf("max-stale=%.f, ", cc.SMaxAge.Seconds()))
-			}
-		case "Public":
-			if cc.Public {
-				buf.WriteString("public, ")
-			}
-		case "Private":
-			if cc.Public {
-				buf.WriteString("private, ")
-			}
-		case "PrivateFields":
-			if cc.PrivateFields != nil {
-				for _, v := range cc.PrivateFields {
-					buf.WriteString(fmt.Sprintf("private=%q, ", v))
-				}
-			}
-		case "NoCacheFields":
-			if cc.NoCacheFields != nil {
-				for _, v := range cc.NoCacheFields {
-					buf.WriteString(fmt.Sprintf("no-cache=%q, ", v))
-				}
-			}
-		case "MustRevalidate":
-			if cc.MustRevalidate {
-				buf.WriteString("must-revalidate, ")
-			}
-		case "ProxyRevalidate":
-			if cc.ProxyRevalidate {
-				buf.WriteString("proxy-revalidate, ")
-			}
-		default:
-			panic(field + " not implemented in String()")
 		}
 	}
 
 	return strings.TrimSuffix(buf.String(), ", ")
-}
-
-const (
-	whitespace = " \t"
-)
-
-type ccDirective struct {
-	key   string
-	value string
-}
-
-func (d *ccDirective) Seconds() (time.Duration, error) {
-	i, err := strconv.Atoi(d.value)
-	if err != nil {
-		return time.Duration(0), err
-	}
-	return time.Duration(i) * time.Second, nil
-}
-
-type ccLexer struct {
-	input      string
-	pos, width int
-	state      int
-	inToken    bool
-}
-
-func (l *ccLexer) current() string {
-	if l.valid() {
-		return string(l.input[l.pos])
-	} else {
-		return ""
-	}
-}
-
-func (l *ccLexer) valid() bool {
-	return l.pos < l.width
-}
-
-func (l *ccLexer) skipWhitespace() {
-	for l.valid() {
-		if !strings.ContainsAny(l.current(), whitespace) {
-			return
-		}
-		l.pos++
-	}
-}
-
-func (l *ccLexer) scanUntil(any string) string {
-	buffer := ""
-	for l.valid() {
-		if strings.ContainsAny(l.current(), any) {
-			break
-		}
-		buffer = buffer + l.current()
-		l.pos++
-	}
-	return buffer
-}
-
-func (l *ccLexer) scanDirective() ccDirective {
-	key := l.scanUntil("=,")
-	val := ""
-
-	if l.current() == "=" {
-		l.pos++
-		val = l.scanValue()
-	}
-
-	return ccDirective{strings.ToLower(key), val}
-}
-
-func (l *ccLexer) scanValue() string {
-	if l.current() == "\"" {
-		l.pos++
-		quote := l.scanUntil("\"")
-		l.pos++
-		return quote
-	}
-
-	return l.scanUntil(", ")
-}
-
-func (l *ccLexer) Lex() chan ccDirective {
-	ch := make(chan ccDirective)
-
-	go func() {
-		for l.valid() {
-			l.skipWhitespace()
-
-			if !l.valid() {
-				break
-			}
-
-			if l.current() == "," {
-				l.pos++
-			} else {
-				ch <- l.scanDirective()
-			}
-		}
-		close(ch)
-	}()
-
-	return ch
 }

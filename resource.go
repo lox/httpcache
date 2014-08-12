@@ -104,8 +104,8 @@ func (e *Resource) Freshness(now time.Time) (time.Duration, error) {
 		return time.Duration(0), err
 	}
 
-	if cc.MaxAge != nil {
-		return *cc.MaxAge, err
+	if cc.Has("max-age") {
+		return cc.Duration("max-age")
 	}
 
 	expires, err := e.Expires()
@@ -128,8 +128,8 @@ func (e *Resource) SharedFreshness(now time.Time) (time.Duration, error) {
 		return time.Duration(0), err
 	}
 
-	if cc.SMaxAge != nil {
-		return *cc.SMaxAge, nil
+	if cc.Has("s-maxage") {
+		return cc.Duration("s-maxage")
 	}
 
 	return freshness, nil
