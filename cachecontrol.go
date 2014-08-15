@@ -59,6 +59,14 @@ func addToken(cc CacheControl, input string) {
 	cc.Add(key, val)
 }
 
+func (cc CacheControl) Get(key string) (string, bool) {
+	v, exists := cc[key]
+	if exists && len(v) > 0 {
+		return v[0], true
+	}
+	return "", exists
+}
+
 func (cc CacheControl) Add(key, val string) {
 	if !cc.Has(key) {
 		cc[key] = []string{}
@@ -74,7 +82,8 @@ func (cc CacheControl) Has(key string) bool {
 }
 
 func (cc CacheControl) Duration(key string) (time.Duration, error) {
-	return time.Duration(0), nil
+	d, _ := cc.Get(key)
+	return time.ParseDuration(d + "s")
 }
 
 func (cc CacheControl) String() string {

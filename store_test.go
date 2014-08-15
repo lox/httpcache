@@ -1,38 +1,38 @@
-package httpcache
+package httpcache_test
 
 import (
 	"io/ioutil"
 	"net/http"
-	"strings"
 	"testing"
 
+	"github.com/lox/httpcache"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestStoringSingleResource(t *testing.T) {
-	s := NewMapStore()
-	r1 := &Resource{
-		Header: make(http.Header),
-		Body:   strings.NewReader("tests"),
+	s := httpcache.NewMapStore()
+	resp := newResponse(http.StatusOK, "tests")
+
+	s.Set("test", resp)
+
+	respRet, ok, err := s.Get("test")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	s.Set("test", r1)
-
-	retR1, ok := s.Get("test")
 	if !ok {
 		t.Fatal("Failed to find resource by key")
 	}
 
-	assert.Equal(t, retR1, r1)
+	assert.Equal(t, respRet, resp)
 
-	b, err := ioutil.ReadAll(retR1.Body)
+	b, err := ioutil.ReadAll(respRet.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	assert.Equal(t, "tests", string(b))
 
-	_, notok := s.Get("not there")
+	_, notok, _ := s.Get("not there")
 	if notok {
 		t.Fatal("Should have failed to find resource")
 	}
