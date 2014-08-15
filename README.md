@@ -1,7 +1,7 @@
 
 # httpcache
 
-`httpcache` provides an [rfc7234][] compliant golang [http.Handler](http://golang.org/pkg/net/http/#Handler). 
+`httpcache` provides an [rfc7234][] compliant golang [http.RoundTripper](http://golang.org/pkg/net/http/#RoundTripper). 
 
 [![wercker status](https://app.wercker.com/status/a76986990d27e72ea656bb37bb93f59f/m "wercker status")](https://app.wercker.com/project/bykey/a76986990d27e72ea656bb37bb93f59f)
 
@@ -14,16 +14,14 @@ This example if from the included CLI, it runs a caching proxy on http://localho
 ```go
 proxy := &httputil.ReverseProxy{
     Director: func(r *http.Request) {
-        log.Println("proxying", r.Method, r.URL.String())
+    },
+    Transport: &httpcache.LogTransport{
+        httpcache.NewTransport(httpcache.NewPrivateCache()),
     },
 }
 
-// build up our handler chain
-cacher := httpcache.NewHandler(httpcache.NewPublicCache(), proxy)
-logger := httpcache.NewLogger(os.Stderr, cacher)
-
-log.Printf("proxy listening on http://localhost", listen)
-log.Fatal(http.ListenAndServe("127.0.0.1:8080", logger))
+log.Printf("proxy listening on http://%s", listen)
+log.Fatal(http.ListenAndServe(listen, proxy))
 ```
 
 ## Todo
@@ -36,7 +34,6 @@ log.Fatal(http.ListenAndServe("127.0.0.1:8080", logger))
 - Heuristic freshness
 - Staleness warnings
 - Corrected Age calculations
-- Caching non-GET with explicit validators
 
 ## Reading List
 
