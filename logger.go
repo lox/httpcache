@@ -3,6 +3,7 @@ package httpcache
 import (
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"strings"
 	"time"
 )
@@ -12,17 +13,47 @@ const (
 	CacheHeader        = "X-Cache"
 )
 
-type LogTransport struct {
-	http.RoundTripper
+type LoggerTransport struct {
+	http.Transport
+	Dump bool
 }
 
-func (l *LogTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	startTime := time.Now()
-	resp, err := l.RoundTripper.RoundTrip(r)
-	if err != err {
+func (t *LoggerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	timer := time.Now().UTC()
+
+	if t.Dump {
+		b, err := httputil.DumpRequest(r, false)
+		if err != nil {
+			return nil, err
+		}
+		log.Printf("Request:\n%s", b)
+	}
+
+	resp, err := t.Transport.RoundTrip(r)
+	if err != nil {
 		return resp, err
 	}
 
+	if startTime := responseStartTime(resp); startTime.Before(timer) {
+		timer = startTime
+	} else {
+		resp.Header.Set(RequestStartHeader, timer.Format(http.TimeFormat))
+	}
+
+	if t.Dump {
+		b, err := httputil.DumpResponse(resp, false)
+		if err != nil {
+			panic(err)
+			return nil, err
+		}
+		log.Printf("Response:\n%s", b)
+	}
+
+	t.writeLog(timer, r, resp)
+	return resp, nil
+}
+
+func (t *LoggerTransport) writeLog(startTime time.Time, r *http.Request, resp *http.Response) {
 	cacheStatus := resp.Header.Get(CacheHeader)
 
 	if strings.HasPrefix(cacheStatus, "HIT") {
@@ -49,6 +80,14 @@ func (l *LogTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		cacheStatus,
 		time.Now().Sub(startTime).String(),
 	)
+}
 
-	return resp, nil
+func responseStartTime(r *http.Response) time.Time {
+	if reqStart := r.Header.Get(RequestStartHeader); reqStart != "" {
+		if ts, err := http.ParseTime(reqStart); err == nil {
+			return ts
+		}
+	}
+
+	return time.Now()
 }
