@@ -21,15 +21,13 @@ func RequestKey(r *http.Request) string {
 	return Key(r.Method, r.URL)
 }
 
-// SecondaryKey generates a key from Key+Headers
-func SecondaryKey(key string, headers http.Header) string {
-	b := bytes.NewBufferString(key)
+// VaryKey generates a key from a Vary header
+func VaryKey(vary string, r *http.Request) string {
+	b := bytes.NewBufferString(RequestKey(r))
 	b.WriteString("::")
 
-	for key, vals := range headers {
-		for _, val := range vals {
-			b.WriteString(key + "=" + val)
-		}
+	for _, header := range strings.Split(vary, ", ") {
+		b.WriteString(header + "=" + r.Header.Get(header))
 	}
 
 	return strings.TrimSuffix(b.String(), ":")

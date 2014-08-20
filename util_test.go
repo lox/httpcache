@@ -105,7 +105,7 @@ type upstreamServer struct {
 	Body         []byte
 	Filename     string
 	CacheControl string
-	Etag         string
+	Etag, Vary   string
 	ModTime      time.Time
 	asserts      []func(r *http.Request)
 }
@@ -133,6 +133,10 @@ func (u *upstreamServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	if u.Etag != "" {
 		rw.Header().Set("Etag", u.Etag)
+	}
+
+	if u.Vary != "" {
+		rw.Header().Set("Vary", u.Vary)
 	}
 
 	http.ServeContent(rw, req, u.Filename, u.ModTime, bytes.NewReader(u.Body))

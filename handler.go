@@ -85,7 +85,7 @@ func (h *Handler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 		res := <-resRw.Resource
 		h.invalidate(r, res)
 		if res.IsCacheable(h.Shared) {
-			h.store.Set(RequestKey(r), res)
+			h.storeResource(r, res)
 		}
 		Writes.Done()
 	}()
@@ -93,6 +93,15 @@ func (h *Handler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set(CacheHeader, "MISS")
 	h.upstream.ServeHTTP(resRw, r)
 	return
+}
+
+func (h *Handler) storeResource(r *http.Request, res *Resource) {
+	h.store.Set(RequestKey(r), res)
+
+	// Secondary store for vary
+	if vary := res.Header.Get("Vary"); vary != "" {
+		h.store.Set(VaryKey(vary, r), res)
+	}
 }
 
 func (h *Handler) validate(r *request, res *Resource) (valid bool) {
@@ -125,7 +134,7 @@ func (h *Handler) freshen(r *http.Request, res *Resource) {
 	go func() {
 		h.invalidate(r, res)
 		if res.IsCacheable(h.Shared) {
-			h.store.Set(RequestKey(r), res)
+			h.storeResource(r, res)
 		}
 		Writes.Done()
 	}()
@@ -134,18 +143,22 @@ func (h *Handler) freshen(r *http.Request, res *Resource) {
 // lookupResource finds the best matching Resource for the
 // request, or nil and false if none is found
 func (h *Handler) lookup(r *request) (*Resource, error) {
-	res, found, err := h.store.Get(Key(r.Method, r.URL))
+	var res *Resource
+	var found bool
 
-	if err != nil {
-		return nil, err
+	if res, found, _ = h.store.Get(Key(r.Method, r.URL)); !found {
+		if r.Method == "HEAD" {
+			res, found, _ = h.store.Get(Key("GET", r.URL))
+		}
 	}
 
-	// HEAD requests can be served from GET cache
-	if !found && r.Method == "HEAD" {
-		res, found, err = h.store.Get(Key("GET", r.URL))
-		if err != nil {
-			return nil, err
-		}
+	if !found {
+		return nil, ErrNotFound
+	}
+
+	// Secondary lookup for vary
+	if vary := res.Header.Get("Vary"); vary != "" {
+		res, found, _ = h.store.Get(VaryKey(vary, r.Request))
 	}
 
 	if !found {
