@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 )
 
@@ -11,18 +12,16 @@ var ErrNotFound = errors.New("Not found")
 var Writes sync.WaitGroup
 
 type Handler struct {
-	Shared    bool
-	Transport http.RoundTripper
-	upstream  http.Handler
-	store     Store
+	Shared   bool
+	upstream http.Handler
+	store    Store
 }
 
 func NewHandler(store Store, upstream http.Handler) *Handler {
 	return &Handler{
-		upstream:  upstream,
-		store:     store,
-		Shared:    false,
-		Transport: http.DefaultTransport,
+		upstream: upstream,
+		store:    store,
+		Shared:   false,
 	}
 }
 
@@ -51,18 +50,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	// Cache miss
 	if err == ErrNotFound {
-		Writes.Add(1)
-		resRw := NewResourceWriter(rw)
-		defer resRw.Close()
-
-		go func() {
-			res := <-resRw.Resource
-			h.store.Set(RequestKey(r), res)
-			Writes.Done()
-		}()
-
-		rw.Header().Set(CacheHeader, "MISS")
-		h.upstream.ServeHTTP(resRw, r)
+		h.serveUpstream(rw, r)
 		return
 	}
 
@@ -71,31 +59,74 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	// Sometimes we'll need to validate the resource
 	if req.mustValidate() || res.MustValidate() || !h.isFresh(req, res) {
-		logRequest(r, "stale, validating response")
+		logRequest(r, "validating cached response")
 
-		changed, err := h.validate(req, res)
-		if err != nil {
-			http.Error(rw, "Error validating response: "+err.Error(),
-				http.StatusBadGateway)
-			return
-		}
-
-		if changed {
-			log.Printf("response is changed")
+		if !h.validate(req, res) {
+			logRequest(r, "response is changed")
 			rw.Header().Set(CacheHeader, "MISS")
+			h.serveUpstream(rw, r)
+			return
 		} else {
-			log.Printf("response is unchanged")
+			logRequest(r, "response is valid, freshening cache")
+			h.freshen(r, res)
 		}
-	} else {
-		logRequest(r, "response is fresh")
 	}
 
+	logRequest(r, "response is fresh")
 	res.ServeHTTP(rw, r)
+}
 
+func (h *Handler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 	Writes.Add(1)
+	resRw := NewResourceWriter(rw)
+	defer resRw.Close()
+
 	go func() {
-		h.invalidateStored(r, res)
-		// h.store.Set(RequestKey(r), res)
+		res := <-resRw.Resource
+		h.invalidate(r, res)
+		if res.IsCacheable(h.Shared) {
+			h.store.Set(RequestKey(r), res)
+		}
+		Writes.Done()
+	}()
+
+	rw.Header().Set(CacheHeader, "MISS")
+	h.upstream.ServeHTTP(resRw, r)
+	return
+}
+
+func (h *Handler) validate(r *request, res *Resource) (valid bool) {
+	req := r.cloneRequest()
+
+	if etag := res.Header.Get("Etag"); etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	} else if lastMod := res.Header.Get("Last-Modified"); lastMod != "" {
+		req.Header.Set("If-Modified-Since", lastMod)
+	}
+
+	resp := httptest.NewRecorder()
+	h.upstream.ServeHTTP(resp, req)
+	resp.Flush()
+
+	valid = compareHeader("ETag", resp.HeaderMap, res.Header) &&
+		compareHeader("Content-MD5", resp.HeaderMap, res.Header) &&
+		compareHeader("Last-Modified", resp.HeaderMap, res.Header)
+
+	if valid && resp.Code != http.StatusNotModified {
+		valid = compareHeader("Content-Length", resp.HeaderMap, res.Header)
+	}
+
+	return
+}
+
+func (h *Handler) freshen(r *http.Request, res *Resource) {
+	Writes.Add(1)
+
+	go func() {
+		h.invalidate(r, res)
+		if res.IsCacheable(h.Shared) {
+			h.store.Set(RequestKey(r), res)
+		}
 		Writes.Done()
 	}()
 }
@@ -140,51 +171,9 @@ func (h *Handler) isFresh(r *request, res *Resource) bool {
 	return maxAge > age
 }
 
-func (h *Handler) validate(r *request, res *Resource) (changed bool, err error) {
-	req := r.Request
-
-	for k, headers := range res.Validators() {
-		for _, val := range headers {
-			switch k {
-			case "Etag":
-				req.Header.Set("If-None-Match", val)
-				log.Printf("Etag: %s", val)
-			case "Last-Modified":
-				req.Header.Set("If-Modified-Since", val)
-				log.Printf("Last-Modified: %s", val)
-			}
-		}
-	}
-
-	resp, err := h.Transport.RoundTrip(req)
-	if err != nil {
-		return false, err
-	}
-
-	return res.Freshen(resp)
-}
-
-func (h *Handler) invalidateStored(r *http.Request, res *Resource) error {
-	switch r.Method {
-	case "GET":
-		h.store.Delete(Key("HEAD", r.URL))
-	case "HEAD":
-		h.store.Delete(Key("GET", r.URL))
-	case "PUT":
-		fallthrough
-	case "POST":
-		h.store.Delete(Key("HEAD", r.URL))
-		h.store.Delete(Key("GET", r.URL))
-	}
-	return nil
-}
-
-func (h *Handler) freshenStored(r *http.Request, res *Resource) error {
-	return nil
-}
-
-func logRequest(r *http.Request, msg string) {
-	log.Printf("[%s %s] %s", r.Method, r.URL.String(), msg)
+func (h *Handler) invalidate(r *http.Request, res *Resource) {
+	h.store.Delete(Key("HEAD", r.URL))
+	h.store.Delete(Key("GET", r.URL))
 }
 
 type request struct {
@@ -209,7 +198,7 @@ func (r *request) mustValidate() bool {
 		return false
 	}
 
-	return cc.Has("must-validate")
+	return cc.Has("no-cache")
 }
 
 func (r *request) cacheControl() (CacheControl, error) {
@@ -224,4 +213,28 @@ func (r *request) cacheControl() (CacheControl, error) {
 
 	r.cc = cc
 	return cc, nil
+}
+
+// cloneRequest returns a clone of the provided *http.Request.
+// The clone is a shallow copy of the struct and its Header map.
+func (r *request) cloneRequest() *http.Request {
+	r2 := new(http.Request)
+	*r2 = *r.Request
+	r2.Header = make(http.Header)
+	for k, s := range r.Header {
+		r2.Header[k] = s
+	}
+	return r2
+}
+
+func compareHeader(header string, h1, h2 http.Header) bool {
+	if h1.Get(header) != h2.Get(header) {
+		log.Printf("%q has changed", header)
+		return false
+	}
+	return true
+}
+
+func logRequest(r *http.Request, msg string) {
+	log.Printf("[%s %s] %s", r.Method, r.URL.String(), msg)
 }

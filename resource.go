@@ -79,6 +79,12 @@ func (r *Resource) MustValidate() bool {
 func (r *Resource) Age() (time.Duration, error) {
 	var d time.Duration
 
+	if ageHeader := r.Header.Get("Age"); ageHeader != "" {
+		if ageInt, err := strconv.Atoi(ageHeader); err == nil {
+			d = time.Second * time.Duration(ageInt)
+		}
+	}
+
 	if dateHeader := r.Header.Get("Date"); dateHeader != "" {
 		if t, err := http.ParseTime(dateHeader); err != nil {
 			return d, err
@@ -127,49 +133,26 @@ func (r *Resource) HeuristicFreshness() (time.Duration, error) {
 	return time.Duration(0), nil
 }
 
-func (r *Resource) Validators() http.Header {
-	h := http.Header{}
-
-	if etag := r.Header.Get("Etag"); etag != "" {
-		h.Set("Etag", etag)
+func (r *Resource) IsCacheable(shared bool) bool {
+	cc, err := r.cacheControl()
+	if err != nil {
+		log.Println("Error parsing cache-control: ", err)
+		return false
 	}
 
-	if lastMod := r.Header.Get("Last-Modified"); lastMod != "" {
-		h.Set("Last-Modified", lastMod)
+	if cc.Has("no-store") {
+		return false
 	}
 
-	if contentMD5 := r.Header.Get("Content-MD5"); contentMD5 != "" {
-		h.Set("Content-MD5", contentMD5)
+	if cc.Has("private") && shared {
+		return false
 	}
 
-	return h
-}
-
-func (r *Resource) Freshen(resp *http.Response) (changed bool, err error) {
-	if resp.StatusCode == http.StatusOK {
-		if resp.ContentLength != r.ContentLength {
-			log.Printf("Content-Length varies: %d != %d", resp.ContentLength, r.ContentLength)
-			changed = true
-		}
-
-		for key, headers := range r.Validators() {
-			for _, header := range headers {
-				if resp.Header.Get(key) != header {
-					log.Printf("%s has changed", key)
-					changed = true
-				}
-			}
-		}
-
-		r.ContentLength = resp.ContentLength
-		r.Body = resp.Body
-		r.Header = resp.Header
-	} else {
-		log.Printf("Freshened StatusCode=%d", resp.StatusCode)
-		// TODO: freshen stored responses as per 4.3.4
+	if r.Header.Get("Authorization") != "" {
+		return false
 	}
 
-	return
+	return true
 }
 
 func (r *Resource) ServeHTTP(w http.ResponseWriter, req *http.Request) {

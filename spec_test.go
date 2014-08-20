@@ -25,9 +25,6 @@ func testSetup() (*client, *upstreamServer) {
 		upstream,
 	)
 
-	// used for validation
-	handler.Transport = upstream
-
 	return &client{handler}, upstream
 }
 
@@ -65,7 +62,9 @@ func TestSpecHeadInvalidatesCachedGet(t *testing.T) {
 	assert.Equal(t, "MISS", client.get("/").cacheStatus)
 	assert.Equal(t, "HIT", client.get("/").cacheStatus)
 	assert.Equal(t, "HIT", client.head("/").cacheStatus)
-	assert.Equal(t, "MISS", client.head("/", cc("must-revalidate")).cacheStatus)
+
+	upstream.Etag = "llamas1"
+	assert.Equal(t, "MISS", client.head("/", cc("no-cache")).cacheStatus)
 	assert.Equal(t, "MISS", client.get("/").cacheStatus)
 }
 
