@@ -1,7 +1,7 @@
 
 # httpcache
 
-`httpcache` provides an [rfc7234][] compliant golang [http.RoundTripper](http://golang.org/pkg/net/http/#RoundTripper). 
+`httpcache` provides an [rfc7234][] compliant golang [http.Handler](http://golang.org/pkg/net/http/#Handler). 
 
 [![wercker status](https://app.wercker.com/status/a76986990d27e72ea656bb37bb93f59f/m "wercker status")](https://app.wercker.com/project/bykey/a76986990d27e72ea656bb37bb93f59f)
 
@@ -15,10 +15,10 @@ This example if from the included CLI, it runs a caching proxy on http://localho
 proxy := &httputil.ReverseProxy{
     Director: func(r *http.Request) {
     },
-    Transport: &httpcache.LogTransport{
-        httpcache.NewTransport(httpcache.NewPrivateCache()),
-    },
 }
+
+handler := httpcache.NewHandler(httpcache.NewMapStore(), proxy)
+handler.Shared = true
 
 log.Printf("proxy listening on http://%s", listen)
 log.Fatal(http.ListenAndServe(listen, proxy))
@@ -26,11 +26,7 @@ log.Fatal(http.ListenAndServe(listen, proxy))
 
 ## Todo
 
-- Revalidation
-- Vary support 
-- Handling of Authorized header
 - Better range support (with caching)
-- HEAD invalidation of GETs
 - Heuristic freshness
 - Staleness warnings
 - Corrected Age calculations
