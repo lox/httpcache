@@ -1,6 +1,8 @@
 package httpcache
 
 import (
+	"bytes"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -9,52 +11,71 @@ import (
 )
 
 const (
-	RequestStartHeader = "X-Request-Start"
-	CacheHeader        = "X-Cache"
+	CacheHeader = "X-Cache"
 )
 
-type LoggerTransport struct {
-	http.Transport
+type responseLogger struct {
+	w      http.ResponseWriter
+	status int
+	size   int
+	t      time.Time
+}
+
+func (l *responseLogger) Header() http.Header {
+	return l.w.Header()
+}
+
+func (l *responseLogger) Write(b []byte) (int, error) {
+	if l.status == 0 {
+		l.status = http.StatusOK
+	}
+	size, err := l.w.Write(b)
+	l.size += size
+	return size, err
+}
+
+func (l *responseLogger) WriteHeader(s int) {
+	l.w.WriteHeader(s)
+	l.status = s
+}
+
+func (l *responseLogger) Status() int {
+	return l.status
+}
+
+func (l *responseLogger) Size() int {
+	return l.size
+}
+
+type Logger struct {
+	http.Handler
 	Dump bool
 }
 
-func (t *LoggerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	timer := time.Now().UTC()
-
-	if t.Dump {
-		b, err := httputil.DumpRequest(r, false)
-		if err != nil {
-			return nil, err
-		}
+func (h *Logger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.Dump {
+		b, _ := httputil.DumpRequest(r, false)
 		log.Printf("Request:\n%s", b)
 	}
 
-	resp, err := t.Transport.RoundTrip(r)
-	if err != nil {
-		return resp, err
+	logger := &responseLogger{w: w, t: time.Now()}
+	h.Handler.ServeHTTP(logger, r)
+
+	if h.Dump {
+		buf := &bytes.Buffer{}
+		buf.WriteString(fmt.Sprintf("HTTP/1.1 %d %s\r\n",
+			logger.status, http.StatusText(logger.status),
+		))
+		logger.w.Header().Write(buf)
+
+		log.Printf("Response:\n%s", buf.String())
 	}
 
-	if startTime := responseStartTime(resp); startTime.Before(timer) {
-		timer = startTime
-	} else {
-		resp.Header.Set(RequestStartHeader, timer.Format(http.TimeFormat))
-	}
-
-	if t.Dump {
-		b, err := httputil.DumpResponse(resp, false)
-		if err != nil {
-			panic(err)
-			return nil, err
-		}
-		log.Printf("Response:\n%s", b)
-	}
-
-	t.writeLog(timer, r, resp)
-	return resp, nil
+	h.writeLog(r, logger)
 }
 
-func (t *LoggerTransport) writeLog(startTime time.Time, r *http.Request, resp *http.Response) {
-	cacheStatus := resp.Header.Get(CacheHeader)
+func (h *Logger) writeLog(r *http.Request, logger *responseLogger) {
+	cacheStatus := logger.w.Header().Get(CacheHeader)
 
 	if strings.HasPrefix(cacheStatus, "HIT") {
 		cacheStatus = "\x1b[32;1mHIT\x1b[0m"
@@ -75,19 +96,9 @@ func (t *LoggerTransport) writeLog(startTime time.Time, r *http.Request, resp *h
 		r.Method,
 		r.URL.String(),
 		r.Proto,
-		http.StatusText(resp.StatusCode),
-		resp.ContentLength,
+		http.StatusText(logger.status),
+		logger.size,
 		cacheStatus,
-		time.Now().Sub(startTime).String(),
+		time.Now().Sub(logger.t).String(),
 	)
-}
-
-func responseStartTime(r *http.Response) time.Time {
-	if reqStart := r.Header.Get(RequestStartHeader); reqStart != "" {
-		if ts, err := http.ParseTime(reqStart); err == nil {
-			return ts
-		}
-	}
-
-	return time.Now()
 }

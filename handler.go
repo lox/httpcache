@@ -28,10 +28,6 @@ func NewHandler(store Store, upstream http.Handler) *Handler {
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	req := &request{Request: r}
 
-	defer func() {
-		logRequest(r, rw.Header().Get(CacheHeader))
-	}()
-
 	// Preconditions
 	if bad, reason := req.isBadRequest(); bad {
 		http.Error(rw, "Invalid request: "+reason,
@@ -59,24 +55,25 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	// Sometimes we'll need to validate the resource
 	if req.mustValidate() || res.MustValidate() || !h.isFresh(req, res) {
-		logRequest(r, "validating cached response")
+		log.Printf("validating cached response")
 
 		if !h.validate(req, res) {
-			logRequest(r, "response is changed")
+			log.Printf("response is changed")
 			rw.Header().Set(CacheHeader, "MISS")
 			h.serveUpstream(rw, r)
 			return
 		} else {
-			logRequest(r, "response is valid, freshening cache")
+			log.Printf("response is valid, freshening cache")
 			h.freshen(r, res)
 		}
 	}
 
-	logRequest(r, "response is fresh")
+	log.Printf("response is fresh")
 	res.ServeHTTP(rw, r)
 }
 
 func (h *Handler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
+	log.Printf("serving upstream")
 	Writes.Add(1)
 	resRw := NewResourceWriter(rw)
 	defer resRw.Close()
@@ -85,7 +82,10 @@ func (h *Handler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
 		res := <-resRw.Resource
 		h.invalidate(r, res)
 		if res.IsCacheable(h.Shared) {
+			log.Println("cacheable, storing")
 			h.storeResource(r, res)
+		} else {
+			log.Println("not cacheable")
 		}
 		Writes.Done()
 	}()
@@ -113,19 +113,24 @@ func (h *Handler) validate(r *request, res *Resource) (valid bool) {
 		req.Header.Set("If-Modified-Since", lastMod)
 	}
 
+	log.Printf("%#v", res.Header)
+
 	resp := httptest.NewRecorder()
 	h.upstream.ServeHTTP(resp, req)
 	resp.Flush()
 
-	valid = compareHeader("ETag", resp.HeaderMap, res.Header) &&
-		compareHeader("Content-MD5", resp.HeaderMap, res.Header) &&
-		compareHeader("Last-Modified", resp.HeaderMap, res.Header)
+	checkHeaders := []string{"ETag", "Content-MD5", "Last-Modified", "Content-Length"}
 
-	if valid && resp.Code != http.StatusNotModified {
-		valid = compareHeader("Content-Length", resp.HeaderMap, res.Header)
+	for _, h := range checkHeaders {
+		if value := resp.HeaderMap.Get(h); value != "" {
+			if res.Header.Get(h) != value {
+				log.Printf("%s changed, %q != %q", h, value, res.Header.Get(h))
+				return false
+			}
+		}
 	}
 
-	return
+	return true
 }
 
 func (h *Handler) freshen(r *http.Request, res *Resource) {
@@ -181,7 +186,17 @@ func (h *Handler) isFresh(r *request, res *Resource) bool {
 		return false
 	}
 
-	return maxAge > age
+	if maxAge > age {
+		log.Printf("max-age is %q, age is %q", maxAge, age)
+		return true
+	}
+
+	if hFresh := res.HeuristicFreshness(); hFresh > age {
+		log.Printf("heuristic freshness of %q", hFresh)
+		return true
+	}
+
+	return false
 }
 
 func (h *Handler) invalidate(r *http.Request, res *Resource) {
@@ -238,16 +253,4 @@ func (r *request) cloneRequest() *http.Request {
 		r2.Header[k] = s
 	}
 	return r2
-}
-
-func compareHeader(header string, h1, h2 http.Header) bool {
-	if h1.Get(header) != h2.Get(header) {
-		log.Printf("%q has changed", header)
-		return false
-	}
-	return true
-}
-
-func logRequest(r *http.Request, msg string) {
-	log.Printf("[%s %s] %s", r.Method, r.URL.String(), msg)
 }

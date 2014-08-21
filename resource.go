@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+const (
+	HEURISTIC_FRACTION = 10
+)
+
 var Clock = func() time.Time {
 	return time.Now()
 }
@@ -126,11 +130,24 @@ func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
 		return expires.Sub(Clock()), nil
 	}
 
-	return r.HeuristicFreshness()
+	return time.Duration(0), nil
 }
 
-func (r *Resource) HeuristicFreshness() (time.Duration, error) {
-	return time.Duration(0), nil
+func (r *Resource) HasExplicitFreshness() bool {
+	cc, err := r.cacheControl()
+	if err != nil {
+		return false
+	}
+
+	return cc.Has("max-age") || cc.Has("public") || r.Header.Get("Expires") != ""
+}
+
+func (r *Resource) HeuristicFreshness() time.Duration {
+	if r.HasExplicitFreshness() {
+		return time.Duration(0)
+	}
+
+	return Clock().Sub(r.LastModified()) / time.Duration(HEURISTIC_FRACTION)
 }
 
 func (r *Resource) IsCacheable(shared bool) bool {
@@ -155,12 +172,35 @@ func (r *Resource) IsCacheable(shared bool) bool {
 	return true
 }
 
+func (r *Resource) Warnings() ([]string, error) {
+	warns := []string{}
+
+	age, err := r.Age()
+	if err != nil {
+		return warns, err
+	}
+
+	// http://httpwg.github.io/specs/rfc7234.html#warn.113
+	if !r.HasExplicitFreshness() {
+		if age > (time.Hour*24) && r.HeuristicFreshness() > (time.Hour*24) {
+			warns = append(warns, `113 - "Heuristic Expiration"`)
+		}
+	}
+
+	return warns, nil
+}
+
 func (r *Resource) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	age, err := r.Age()
 	if err != nil {
 		http.Error(w, "Error calculating age: "+err.Error(),
 			http.StatusInternalServerError)
 		return
+	}
+
+	warnings, _ := r.Warnings()
+	for _, warn := range warnings {
+		w.Header().Add("Warning", warn)
 	}
 
 	w.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))

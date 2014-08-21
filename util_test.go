@@ -106,8 +106,9 @@ type upstreamServer struct {
 	Filename     string
 	CacheControl string
 	Etag, Vary   string
-	ModTime      time.Time
+	LastModified time.Time
 	asserts      []func(r *http.Request)
+	requests     int
 }
 
 func (u *upstreamServer) timeTravel(d time.Duration) {
@@ -119,6 +120,8 @@ func (u *upstreamServer) assert(f func(r *http.Request)) {
 }
 
 func (u *upstreamServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	u.requests = u.requests + 1
+
 	for _, assertf := range u.asserts {
 		assertf(req)
 	}
@@ -139,7 +142,8 @@ func (u *upstreamServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		rw.Header().Set("Vary", u.Vary)
 	}
 
-	http.ServeContent(rw, req, u.Filename, u.ModTime, bytes.NewReader(u.Body))
+	http.ServeContent(rw, req, u.Filename, u.LastModified, bytes.NewReader(u.Body))
+
 }
 
 func (u *upstreamServer) RoundTrip(req *http.Request) (*http.Response, error) {

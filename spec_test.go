@@ -20,10 +20,18 @@ func testSetup() (*client, *upstreamServer) {
 		return upstream.Now
 	}
 
-	handler := httpcache.NewHandler(
+	hc := httpcache.NewHandler(
 		httpcache.NewMapStore(),
 		upstream,
 	)
+
+	var handler http.Handler = hc
+
+	if testing.Verbose() {
+		handler = &httpcache.Logger{
+			Handler: hc,
+		}
+	}
 
 	return &client{handler}, upstream
 }
@@ -41,6 +49,18 @@ func TestSpecBasicCaching(t *testing.T) {
 	assert.Equal(t, "HIT", r2.cacheStatus)
 	assert.Equal(t, string(upstream.Body), string(r2.body))
 	assert.Equal(t, 10, r2.age)
+}
+
+func TestSpecHeuristicCaching(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.LastModified = upstream.Now.AddDate(-1, 0, 0)
+	assert.Equal(t, "MISS", client.get("/").cacheStatus)
+
+	upstream.timeTravel(time.Hour * 48)
+	r2 := client.get("/")
+	assert.Equal(t, "HIT", r2.cacheStatus)
+	assert.Equal(t, []string{"113 - \"Heuristic Expiration\""}, r2.Header()["Warning"])
+	assert.Equal(t, 1, upstream.requests, "The second request shouldn't validate")
 }
 
 func TestSpecRequestsWithoutHostHeader(t *testing.T) {

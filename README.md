@@ -26,9 +26,8 @@ log.Fatal(http.ListenAndServe(listen, proxy))
 
 ## Todo
 
-- Better range support (with caching)
-- Heuristic freshness
-- Staleness warnings
+- Better range support (with caching of partial content)
+- Stale support w/ warnings 
 - Corrected Age calculations
 
 ## Reading List
