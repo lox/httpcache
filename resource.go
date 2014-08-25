@@ -1,6 +1,7 @@
 package httpcache
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -9,10 +10,12 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/lox/httpcache/store"
 )
 
 const (
-	HEURISTIC_FRACTION = 10
+	lastModDivisor = 10
 )
 
 var Clock = func() time.Time {
@@ -20,25 +23,70 @@ var Clock = func() time.Time {
 }
 
 type Resource struct {
-	ContentLength int64
-	StatusCode    int
-	Header        http.Header
-	Body          io.ReadCloser
-	cc            CacheControl
+	*http.Response
+	cc CacheControl
 }
 
 func NewResource() *Resource {
 	return &Resource{
-		Body:   ioutil.NopCloser(bytes.NewReader([]byte{})),
-		Header: make(http.Header),
+		Response: &http.Response{
+			Proto:      "HTTP/1.1",
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Body:       ioutil.NopCloser(bytes.NewReader([]byte{})),
+			Header:     make(http.Header),
+		},
 	}
 }
 
 func NewResourceString(s string) *Resource {
+	res := NewResource()
+	res.Body = ioutil.NopCloser(bytes.NewReader([]byte(s)))
+	return res
+}
+
+func NewResourceResponse(resp *http.Response) *Resource {
 	return &Resource{
-		Header: make(http.Header),
-		Body:   ioutil.NopCloser(bytes.NewReader([]byte(s))),
+		Response: resp,
 	}
+}
+
+func LoadResource(key string, r *http.Request, s store.Store) (*Resource, error) {
+	rc, err := s.ReadStream(key)
+	if store.IsNotExists(err) {
+		return nil, ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+
+	defer rc.Close()
+	resp, err := http.ReadResponse(bufio.NewReader(rc), r)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Resource{Response: resp}, nil
+}
+
+func (r *Resource) Save(key string, s store.Store) error {
+	read, write := io.Pipe()
+
+	Writes.Add(1)
+	go func() {
+		if err := s.WriteStream(key, read); err != nil {
+			log.Println("Error writing resource", err)
+		}
+		r.Body.Close()
+		Writes.Done()
+	}()
+
+	err := r.Response.Write(write)
+	if err != nil {
+		return err
+	}
+
+	write.Close()
+	return nil
 }
 
 func (r *Resource) cacheControl() (CacheControl, error) {
@@ -147,13 +195,21 @@ func (r *Resource) HeuristicFreshness() time.Duration {
 		return time.Duration(0)
 	}
 
-	return Clock().Sub(r.LastModified()) / time.Duration(HEURISTIC_FRACTION)
+	return Clock().Sub(r.LastModified()) / time.Duration(lastModDivisor)
 }
 
 func (r *Resource) IsCacheable(shared bool) bool {
+	if !isStatusCodeCacheable(r.StatusCode) {
+		return false
+	}
+
 	cc, err := r.cacheControl()
 	if err != nil {
 		log.Println("Error parsing cache-control: ", err)
+		return false
+	}
+
+	if cc.Has("no-cache") {
 		return false
 	}
 
@@ -170,6 +226,26 @@ func (r *Resource) IsCacheable(shared bool) bool {
 	}
 
 	return true
+}
+
+func isStatusCodeCacheable(status int) bool {
+	allowed := []int{
+		http.StatusOK,
+		http.StatusFound,
+		http.StatusNotModified,
+		http.StatusNonAuthoritativeInfo,
+		http.StatusMultipleChoices,
+		http.StatusMovedPermanently,
+		http.StatusGone,
+	}
+
+	for _, a := range allowed {
+		if a == status {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (r *Resource) Warnings() ([]string, error) {
@@ -191,6 +267,12 @@ func (r *Resource) Warnings() ([]string, error) {
 }
 
 func (r *Resource) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	for key, headers := range r.Header {
+		for _, header := range headers {
+			w.Header().Add(key, header)
+		}
+	}
+
 	age, err := r.Age()
 	if err != nil {
 		http.Error(w, "Error calculating age: "+err.Error(),
@@ -210,52 +292,7 @@ func (r *Resource) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			http.StatusInternalServerError)
 		return
 	}
+
 	r.Body.Close()
 	http.ServeContent(w, req, "", r.LastModified(), bytes.NewReader(b))
-}
-
-func NewResourceWriter(rw http.ResponseWriter) *responseWriter {
-	r, w := io.Pipe()
-
-	return &responseWriter{
-		ResponseWriter: rw,
-		Resource:       make(chan *Resource),
-		pr:             r,
-		pw:             w,
-	}
-}
-
-type responseWriter struct {
-	http.ResponseWriter
-	Resource chan *Resource
-	pr       io.ReadCloser
-	pw       io.WriteCloser
-}
-
-func (rw *responseWriter) WriteHeader(status int) {
-	res := NewResource()
-	res.Header = rw.Header()
-	res.Body = rw.pr
-	res.StatusCode = status
-
-	if clenHeader := res.Header.Get("Content-Length"); clenHeader != "" {
-		clenInt, err := strconv.ParseInt(clenHeader, 10, 64)
-		if err == nil {
-			res.ContentLength = clenInt
-		}
-	}
-
-	rw.Resource <- res
-	rw.ResponseWriter.WriteHeader(status)
-}
-
-func (rw *responseWriter) Write(b []byte) (int, error) {
-	if n, err := rw.pw.Write(b); err != nil {
-		return n, err
-	}
-	return rw.ResponseWriter.Write(b)
-}
-
-func (rw *responseWriter) Close() error {
-	return rw.pw.Close()
 }

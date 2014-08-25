@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lox/httpcache"
+	"github.com/lox/httpcache/store"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -14,6 +15,7 @@ func testSetup() (*client, *upstreamServer) {
 		Body:    []byte("llamas"),
 		asserts: []func(r *http.Request){},
 		Now:     time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
+		Header:  http.Header{},
 	}
 
 	httpcache.Clock = func() time.Time {
@@ -21,7 +23,7 @@ func testSetup() (*client, *upstreamServer) {
 	}
 
 	hc := httpcache.NewHandler(
-		httpcache.NewMapStore(),
+		store.NewMapStore(),
 		upstream,
 	)
 
@@ -34,6 +36,21 @@ func testSetup() (*client, *upstreamServer) {
 	}
 
 	return &client{handler}, upstream
+}
+
+func TestSpecNoCaching(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=0, no-cache"
+
+	r1 := client.get("/")
+	assert.Equal(t, http.StatusOK, r1.Code)
+	assert.Equal(t, "SKIP", r1.cacheStatus)
+	assert.Equal(t, string(upstream.Body), string(r1.body))
+
+	r2 := client.get("/")
+	assert.Equal(t, http.StatusOK, r2.Code)
+	assert.Equal(t, "SKIP", r2.cacheStatus)
+	assert.Equal(t, string(upstream.Body), string(r1.body))
 }
 
 func TestSpecBasicCaching(t *testing.T) {
@@ -83,8 +100,7 @@ func TestSpecHeadInvalidatesCachedGet(t *testing.T) {
 	assert.Equal(t, "HIT", client.get("/").cacheStatus)
 	assert.Equal(t, "HIT", client.head("/").cacheStatus)
 
-	upstream.Etag = "llamas1"
-	assert.Equal(t, "MISS", client.head("/", cc("no-cache")).cacheStatus)
+	assert.Equal(t, "SKIP", client.head("/", cc("no-cache")).cacheStatus)
 	assert.Equal(t, "MISS", client.get("/").cacheStatus)
 }
 
@@ -95,6 +111,7 @@ func TestSpecValidatingStaleResponsesUnchanged(t *testing.T) {
 	assert.Equal(t, "MISS", client.get("/").cacheStatus)
 
 	upstream.timeTravel(time.Second * 90)
+	upstream.Header.Add("X-New-Header", "1")
 
 	r2 := client.get("/")
 	assert.Equal(t, http.StatusOK, r2.Code)
@@ -141,4 +158,18 @@ func TestSpecVaryHeader(t *testing.T) {
 	assert.Equal(t, "HIT", client.get("/", "Accept-Language: en").cacheStatus)
 	assert.Equal(t, "MISS", client.get("/", "Accept-Language: de").cacheStatus)
 	assert.Equal(t, "HIT", client.get("/", "Accept-Language: de").cacheStatus)
+}
+
+func TestSpecHeadersPropagated(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=60"
+	upstream.Header.Add("X-Llamas", "1")
+	upstream.Header.Add("X-Llamas", "3")
+	upstream.Header.Add("X-Llamas", "2")
+
+	assert.Equal(t, "MISS", client.get("/").cacheStatus)
+
+	r2 := client.get("/")
+	assert.Equal(t, "HIT", r2.cacheStatus)
+	assert.Equal(t, []string{"1", "3", "2"}, r2.Header()["X-Llamas"])
 }

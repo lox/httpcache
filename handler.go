@@ -1,11 +1,15 @@
 package httpcache
 
 import (
+	"bytes"
 	"errors"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+
+	"github.com/lox/httpcache/store"
 )
 
 var ErrNotFound = errors.New("Not found")
@@ -14,10 +18,10 @@ var Writes sync.WaitGroup
 type Handler struct {
 	Shared   bool
 	upstream http.Handler
-	store    Store
+	store    store.Store
 }
 
-func NewHandler(store Store, upstream http.Handler) *Handler {
+func NewHandler(store store.Store, upstream http.Handler) *Handler {
 	return &Handler{
 		upstream: upstream,
 		store:    store,
@@ -32,6 +36,14 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if bad, reason := req.isBadRequest(); bad {
 		http.Error(rw, "Invalid request: "+reason,
 			http.StatusBadRequest)
+		return
+	}
+
+	if !req.isCacheable() {
+		log.Printf("request not cacheable")
+		rw.Header().Set(CacheHeader, "SKIP")
+		h.upstream.ServeHTTP(rw, r)
+		h.invalidate(r)
 		return
 	}
 
@@ -63,8 +75,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			h.serveUpstream(rw, r)
 			return
 		} else {
-			log.Printf("response is valid, freshening cache")
-			h.freshen(r, res)
+			log.Printf("response is valid")
 		}
 	}
 
@@ -72,36 +83,42 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	res.ServeHTTP(rw, r)
 }
 
-func (h *Handler) serveUpstream(rw http.ResponseWriter, r *http.Request) {
+func (h *Handler) serveUpstream(w http.ResponseWriter, r *http.Request) {
+	h.invalidate(r)
+
+	rw := newResponseWriter(w)
+
 	log.Printf("serving upstream")
-	Writes.Add(1)
-	resRw := NewResourceWriter(rw)
-	defer resRw.Close()
+	h.upstream.ServeHTTP(rw, r)
 
-	go func() {
-		res := <-resRw.Resource
-		h.invalidate(r, res)
-		if res.IsCacheable(h.Shared) {
-			log.Println("cacheable, storing")
-			h.storeResource(r, res)
-		} else {
-			log.Println("not cacheable")
-		}
-		Writes.Done()
-	}()
+	res := rw.Resource()
 
-	rw.Header().Set(CacheHeader, "MISS")
-	h.upstream.ServeHTTP(resRw, r)
-	return
+	if res.IsCacheable(h.Shared) {
+		log.Println("cacheable, storing")
+		rw.Header().Set(CacheHeader, "MISS")
+		h.storeResource(r, res)
+	} else {
+		log.Println("not cacheable")
+		rw.Header().Set(CacheHeader, "SKIP")
+	}
 }
 
 func (h *Handler) storeResource(r *http.Request, res *Resource) {
-	h.store.Set(RequestKey(r), res)
+	Writes.Add(1)
 
-	// Secondary store for vary
-	if vary := res.Header.Get("Vary"); vary != "" {
-		h.store.Set(VaryKey(vary, r), res)
-	}
+	go func() {
+		res.Save(RequestKey(r), h.store)
+
+		// Secondary store for vary
+		if vary := res.Header.Get("Vary"); vary != "" {
+			h.store.Copy(
+				VaryKey(res.Header.Get("Vary"), r),
+				RequestKey(r),
+			)
+		}
+
+		Writes.Done()
+	}()
 }
 
 func (h *Handler) validate(r *request, res *Resource) (valid bool) {
@@ -112,8 +129,6 @@ func (h *Handler) validate(r *request, res *Resource) (valid bool) {
 	} else if lastMod := res.Header.Get("Last-Modified"); lastMod != "" {
 		req.Header.Set("If-Modified-Since", lastMod)
 	}
-
-	log.Printf("%#v", res.Header)
 
 	resp := httptest.NewRecorder()
 	h.upstream.ServeHTTP(resp, req)
@@ -133,41 +148,27 @@ func (h *Handler) validate(r *request, res *Resource) (valid bool) {
 	return true
 }
 
-func (h *Handler) freshen(r *http.Request, res *Resource) {
-	Writes.Add(1)
-
-	go func() {
-		h.invalidate(r, res)
-		if res.IsCacheable(h.Shared) {
-			h.storeResource(r, res)
-		}
-		Writes.Done()
-	}()
-}
-
 // lookupResource finds the best matching Resource for the
-// request, or nil and false if none is found
+// request, or nil and ErrNotFound if none is found
 func (h *Handler) lookup(r *request) (*Resource, error) {
-	var res *Resource
-	var found bool
+	res, err := LoadResource(Key(r.Method, r.URL), r.Request, h.store)
 
-	if res, found, _ = h.store.Get(Key(r.Method, r.URL)); !found {
-		if r.Method == "HEAD" {
-			res, found, _ = h.store.Get(Key("GET", r.URL))
+	// HEAD requests can be served from GET
+	if err == ErrNotFound && r.Method == "HEAD" {
+		res, err = LoadResource(Key("GET", r.URL), r.Request, h.store)
+		if err != nil {
+			return res, err
 		}
+	} else if err != nil {
+		return res, err
 	}
 
-	if !found {
-		return nil, ErrNotFound
-	}
-
-	// Secondary lookup for vary
+	// Secondary lookup for Vary
 	if vary := res.Header.Get("Vary"); vary != "" {
-		res, found, _ = h.store.Get(VaryKey(vary, r.Request))
-	}
-
-	if !found {
-		return nil, ErrNotFound
+		res, err = LoadResource(VaryKey(vary, r.Request), r.Request, h.store)
+		if err != nil {
+			return res, err
+		}
 	}
 
 	return res, nil
@@ -199,7 +200,7 @@ func (h *Handler) isFresh(r *request, res *Resource) bool {
 	return false
 }
 
-func (h *Handler) invalidate(r *http.Request, res *Resource) {
+func (h *Handler) invalidate(r *http.Request) {
 	h.store.Delete(Key("HEAD", r.URL))
 	h.store.Delete(Key("GET", r.URL))
 }
@@ -207,6 +208,25 @@ func (h *Handler) invalidate(r *http.Request, res *Resource) {
 type request struct {
 	*http.Request
 	cc CacheControl
+}
+
+func (r *request) isCacheable() bool {
+	if !(r.Method == "GET" || r.Method == "HEAD") {
+		return false
+	}
+
+	cc, err := r.cacheControl()
+	if err != nil {
+		return false
+	}
+
+	maxAge, _ := cc.Get("max-age")
+
+	if cc.Has("no-cache") || maxAge == "0" {
+		return false
+	}
+
+	return true
 }
 
 func (r *request) isBadRequest() (valid bool, reason string) {
@@ -253,4 +273,36 @@ func (r *request) cloneRequest() *http.Request {
 		r2.Header[k] = s
 	}
 	return r2
+}
+
+func newResponseWriter(w http.ResponseWriter) *responseWriter {
+	return &responseWriter{
+		ResponseWriter: w,
+		buf:            &bytes.Buffer{},
+	}
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	buf        *bytes.Buffer
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(status int) {
+	rw.statusCode = status
+	rw.ResponseWriter.WriteHeader(status)
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	rw.buf.Write(b)
+	return rw.ResponseWriter.Write(b)
+}
+
+func (rw *responseWriter) Resource() *Resource {
+	res := NewResource()
+	res.StatusCode = rw.statusCode
+	res.Header = rw.Header()
+	res.Body = ioutil.NopCloser(bytes.NewReader(rw.buf.Bytes()))
+	res.ContentLength = int64(rw.buf.Len())
+	return res
 }

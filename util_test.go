@@ -3,6 +3,7 @@ package httpcache_test
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -107,6 +108,7 @@ type upstreamServer struct {
 	CacheControl string
 	Etag, Vary   string
 	LastModified time.Time
+	Header       http.Header
 	asserts      []func(r *http.Request)
 	requests     int
 }
@@ -142,6 +144,14 @@ func (u *upstreamServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		rw.Header().Set("Vary", u.Vary)
 	}
 
+	if u.Header != nil {
+		for key, headers := range u.Header {
+			for _, header := range headers {
+				rw.Header().Add(key, header)
+			}
+		}
+	}
+
 	http.ServeContent(rw, req, u.Filename, u.LastModified, bytes.NewReader(u.Body))
 
 }
@@ -158,4 +168,16 @@ func (u *upstreamServer) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func cc(cc string) string {
 	return fmt.Sprintf("Cache-Control: %s", cc)
+}
+
+func readAll(r io.Reader) []byte {
+	b, err := ioutil.ReadAll(r)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func readAllString(r io.Reader) string {
+	return string(readAll(r))
 }
