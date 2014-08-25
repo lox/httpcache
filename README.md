@@ -17,7 +17,7 @@ proxy := &httputil.ReverseProxy{
     },
 }
 
-handler := httpcache.NewHandler(httpcache.NewMapStore(), proxy)
+handler := httpcache.NewHandler(store.NewMapStore(), proxy)
 handler.Shared = true
 
 log.Printf("proxy listening on http://%s", listen)
@@ -29,6 +29,7 @@ log.Fatal(http.ListenAndServe(listen, proxy))
 - Better range support (with caching of partial content)
 - Stale support w/ warnings 
 - Corrected Age calculations
+- Freshening stored responses
 
 ## Reading List
 
