@@ -4,39 +4,31 @@ import (
 	"bytes"
 	"io"
 	"io/ioutil"
-	"sync"
 )
 
 type MapStore struct {
-	mutex sync.RWMutex
+	mutex *storeMutex
 	data  map[string][]byte
 }
 
 func NewMapStore() *MapStore {
-	return &MapStore{data: map[string][]byte{}}
+	return &MapStore{
+		data: map[string][]byte{}, mutex: newStoreMutex(),
+	}
 }
 
 func (m *MapStore) Has(key string) bool {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+	mutex := m.mutex.ForKey(key)
+	mutex.RLock()
+	defer mutex.RUnlock()
 	_, ok := m.data[key]
 	return ok
 }
 
-func (m *MapStore) Copy(dest, src string) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	b, ok := m.data[src]
-	if !ok {
-		return ErrNotExists
-	}
-	m.data[dest] = b
-	return nil
-}
-
-func (m *MapStore) ReadStream(key string) (io.ReadCloser, error) {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+func (m *MapStore) Reader(key string) (io.ReadCloser, error) {
+	mutex := m.mutex.ForKey(key)
+	mutex.RLock()
+	defer mutex.RUnlock()
 	b, ok := m.data[key]
 	if !ok {
 		return nil, ErrNotExists
@@ -44,20 +36,30 @@ func (m *MapStore) ReadStream(key string) (io.ReadCloser, error) {
 	return ioutil.NopCloser(bytes.NewReader(b)), nil
 }
 
-func (m *MapStore) WriteStream(key string, r io.Reader) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	b, err := ioutil.ReadAll(r)
-	if err != nil {
-		return err
-	}
-	m.data[key] = b
-	return nil
+func (m *MapStore) Writer(key string) (io.WriteCloser, error) {
+	return &mapStoreWriter{Buffer: &bytes.Buffer{}, ms: m, key: key}, nil
 }
 
 func (m *MapStore) Delete(key string) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	mutex := m.mutex.ForKey(key)
+	mutex.Lock()
+	defer mutex.Unlock()
 	delete(m.data, key)
+	return nil
+}
+
+type mapStoreWriter struct {
+	*bytes.Buffer
+	ms  *MapStore
+	key string
+}
+
+func (mw *mapStoreWriter) Close() error {
+	mutex := mw.ms.mutex.ForKey(mw.key)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	mw.ms.data[mw.key] = mw.Buffer.Bytes()
+	mw.Buffer = nil
 	return nil
 }

@@ -3,6 +3,7 @@ package httpcache
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -24,7 +25,8 @@ var Clock = func() time.Time {
 
 type Resource struct {
 	*http.Response
-	cc CacheControl
+	cc     CacheControl
+	closer io.Closer
 }
 
 func NewResource() *Resource {
@@ -52,40 +54,36 @@ func NewResourceResponse(resp *http.Response) *Resource {
 }
 
 func LoadResource(key string, r *http.Request, s store.Store) (*Resource, error) {
-	rc, err := s.ReadStream(key)
+	rc, err := s.Reader(key)
+
 	if store.IsNotExists(err) {
 		return nil, ErrNotFound
-	} else if err != nil {
+	}
+
+	if err != nil {
 		return nil, err
 	}
 
-	defer rc.Close()
+	log.Printf("cache hit for %q", key)
 	resp, err := http.ReadResponse(bufio.NewReader(rc), r)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Resource{Response: resp}, nil
+	return &Resource{Response: resp, closer: rc}, nil
 }
 
 func (r *Resource) Save(key string, s store.Store) error {
-	read, write := io.Pipe()
-
-	Writes.Add(1)
-	go func() {
-		if err := s.WriteStream(key, read); err != nil {
-			log.Println("Error writing resource", err)
-		}
-		r.Body.Close()
-		Writes.Done()
-	}()
-
-	err := r.Response.Write(write)
+	w, err := s.Writer(key)
 	if err != nil {
 		return err
 	}
 
-	write.Close()
+	defer w.Close()
+	if err = r.Response.Write(w); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -113,6 +111,14 @@ func (r *Resource) LastModified() time.Time {
 	}
 
 	return modTime
+}
+
+func (r *Resource) Expires() (time.Time, error) {
+	if expires := r.Header.Get("Expires"); expires != "" {
+		return http.ParseTime(expires)
+	}
+
+	return time.Time{}, errors.New("No expires header present")
 }
 
 func (r *Resource) MustValidate() bool {
@@ -191,11 +197,11 @@ func (r *Resource) HasExplicitFreshness() bool {
 }
 
 func (r *Resource) HeuristicFreshness() time.Duration {
-	if r.HasExplicitFreshness() {
-		return time.Duration(0)
+	if r.Header.Get("Last-Modified") != "" && !r.HasExplicitFreshness() {
+		return Clock().Sub(r.LastModified()) / time.Duration(lastModDivisor)
 	}
 
-	return Clock().Sub(r.LastModified()) / time.Duration(lastModDivisor)
+	return time.Duration(0)
 }
 
 func (r *Resource) IsCacheable(shared bool) bool {
@@ -225,7 +231,21 @@ func (r *Resource) IsCacheable(shared bool) bool {
 		return false
 	}
 
-	return true
+	if r.Header.Get("Last-Modified") != "" || r.Header.Get("Etag") != "" {
+		return true
+	}
+
+	if r.Header.Get("Expires") != "" {
+		if _, err := r.Expires(); err != nil {
+			return false
+		}
+	}
+
+	if r.HasExplicitFreshness() {
+		return true
+	}
+
+	return false
 }
 
 func isStatusCodeCacheable(status int) bool {
@@ -288,11 +308,19 @@ func (r *Resource) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
+		log.Println("Error reading resource", err)
 		http.Error(w, "Error reading resource: "+err.Error(),
 			http.StatusInternalServerError)
 		return
 	}
 
-	r.Body.Close()
 	http.ServeContent(w, req, "", r.LastModified(), bytes.NewReader(b))
+
+	if err := r.Close(); err != nil {
+		log.Println("Error closing resource", err)
+	}
+}
+
+func (r *Resource) Close() error {
+	return r.closer.Close()
 }

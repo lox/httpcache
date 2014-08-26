@@ -49,21 +49,18 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	res, err := h.lookup(req)
 
-	// Cache error
-	if err != nil && err != ErrNotFound {
-		http.Error(rw, "Lookup error: "+err.Error(),
-			http.StatusInternalServerError)
-		return
-	}
-
 	// Cache miss
 	if err == ErrNotFound {
 		h.serveUpstream(rw, r)
 		return
 	}
 
-	// Otherwise, Cache hit
-	rw.Header().Set(CacheHeader, "HIT")
+	// Cache error
+	if err != nil {
+		http.Error(rw, "Lookup error: "+err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
 
 	// Sometimes we'll need to validate the resource
 	if req.mustValidate() || res.MustValidate() || !h.isFresh(req, res) {
@@ -76,7 +73,10 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			return
 		} else {
 			log.Printf("response is valid")
+			rw.Header().Set(CacheHeader, "HIT")
 		}
+	} else {
+		rw.Header().Set(CacheHeader, "HIT")
 	}
 
 	log.Printf("response is fresh")
@@ -90,11 +90,11 @@ func (h *Handler) serveUpstream(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("serving upstream")
 	h.upstream.ServeHTTP(rw, r)
-
 	res := rw.Resource()
 
 	if res.IsCacheable(h.Shared) {
-		log.Println("cacheable, storing")
+		ttl, _ := res.MaxAge(h.Shared)
+		log.Printf("cacheable, storing for %s", ttl.String())
 		rw.Header().Set(CacheHeader, "MISS")
 		h.storeResource(r, res)
 	} else {
@@ -107,17 +107,20 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 	Writes.Add(1)
 
 	go func() {
+		defer Writes.Done()
 		res.Save(RequestKey(r), h.store)
 
 		// Secondary store for vary
 		if vary := res.Header.Get("Vary"); vary != "" {
-			h.store.Copy(
+			_, err := store.Copy(
 				VaryKey(res.Header.Get("Vary"), r),
 				RequestKey(r),
+				h.store,
 			)
+			if err != nil {
+				log.Println(err)
+			}
 		}
-
-		Writes.Done()
 	}()
 }
 
