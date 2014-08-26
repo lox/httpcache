@@ -80,6 +80,22 @@ func TestSpecHeuristicCaching(t *testing.T) {
 	assert.Equal(t, 1, upstream.requests, "The second request shouldn't validate")
 }
 
+func TestSpecNoCachingByDefault(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.LastModified = time.Time{}
+	upstream.Etag = ""
+
+	assert.Equal(t, "SKIP", client.get("/").cacheStatus)
+}
+
+func TestSpecNoCachingForInvalidExpires(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.LastModified = time.Time{}
+	upstream.Header.Set("Expires", "-1")
+
+	assert.Equal(t, "SKIP", client.get("/").cacheStatus)
+}
+
 func TestSpecRequestsWithoutHostHeader(t *testing.T) {
 	client, _ := testSetup()
 

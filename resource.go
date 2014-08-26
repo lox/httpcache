@@ -3,6 +3,7 @@ package httpcache
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -112,6 +113,14 @@ func (r *Resource) LastModified() time.Time {
 	return modTime
 }
 
+func (r *Resource) Expires() (time.Time, error) {
+	if expires := r.Header.Get("Expires"); expires != "" {
+		return http.ParseTime(expires)
+	}
+
+	return time.Time{}, errors.New("No expires header present")
+}
+
 func (r *Resource) MustValidate() bool {
 	cc, err := r.cacheControl()
 	if err != nil {
@@ -188,11 +197,11 @@ func (r *Resource) HasExplicitFreshness() bool {
 }
 
 func (r *Resource) HeuristicFreshness() time.Duration {
-	if r.HasExplicitFreshness() {
-		return time.Duration(0)
+	if r.Header.Get("Last-Modified") != "" && !r.HasExplicitFreshness() {
+		return Clock().Sub(r.LastModified()) / time.Duration(lastModDivisor)
 	}
 
-	return Clock().Sub(r.LastModified()) / time.Duration(lastModDivisor)
+	return time.Duration(0)
 }
 
 func (r *Resource) IsCacheable(shared bool) bool {
@@ -222,7 +231,21 @@ func (r *Resource) IsCacheable(shared bool) bool {
 		return false
 	}
 
-	return true
+	if r.Header.Get("Last-Modified") != "" || r.Header.Get("Etag") != "" {
+		return true
+	}
+
+	if r.Header.Get("Expires") != "" {
+		if _, err := r.Expires(); err != nil {
+			return false
+		}
+	}
+
+	if r.HasExplicitFreshness() {
+		return true
+	}
+
+	return false
 }
 
 func isStatusCodeCacheable(status int) bool {
