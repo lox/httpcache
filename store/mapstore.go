@@ -7,24 +7,28 @@ import (
 )
 
 type MapStore struct {
-	mutex *KeyMutex
+	mutex *storeMutex
 	data  map[string][]byte
 }
 
 func NewMapStore() *MapStore {
-	return &MapStore{data: map[string][]byte{}, mutex: NewKeyMutex()}
+	return &MapStore{
+		data: map[string][]byte{}, mutex: newStoreMutex(),
+	}
 }
 
 func (m *MapStore) Has(key string) bool {
-	m.mutex.KeyRLock(key)
-	defer m.mutex.KeyRUnlock(key)
+	mutex := m.mutex.ForKey(key)
+	mutex.RLock()
+	defer mutex.RUnlock()
 	_, ok := m.data[key]
 	return ok
 }
 
 func (m *MapStore) Reader(key string) (io.ReadCloser, error) {
-	m.mutex.KeyRLock(key)
-	defer m.mutex.KeyRUnlock(key)
+	mutex := m.mutex.ForKey(key)
+	mutex.RLock()
+	defer mutex.RUnlock()
 	b, ok := m.data[key]
 	if !ok {
 		return nil, ErrNotExists
@@ -33,13 +37,13 @@ func (m *MapStore) Reader(key string) (io.ReadCloser, error) {
 }
 
 func (m *MapStore) Writer(key string) (io.WriteCloser, error) {
-	m.mutex.KeyLock(key)
 	return &mapStoreWriter{Buffer: &bytes.Buffer{}, ms: m, key: key}, nil
 }
 
 func (m *MapStore) Delete(key string) error {
-	m.mutex.KeyLock(key)
-	defer m.mutex.KeyUnlock(key)
+	mutex := m.mutex.ForKey(key)
+	mutex.Lock()
+	defer mutex.Unlock()
 	delete(m.data, key)
 	return nil
 }
@@ -51,7 +55,10 @@ type mapStoreWriter struct {
 }
 
 func (mw *mapStoreWriter) Close() error {
-	defer mw.ms.mutex.KeyUnlock(mw.key)
+	mutex := mw.ms.mutex.ForKey(mw.key)
+	mutex.Lock()
+	defer mutex.Unlock()
+
 	mw.ms.data[mw.key] = mw.Buffer.Bytes()
 	mw.Buffer = nil
 	return nil

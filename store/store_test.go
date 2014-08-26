@@ -26,9 +26,7 @@ type storeTester struct {
 }
 
 func (st *storeTester) Test(t *testing.T) {
-
 	log.Printf("Testing writing")
-
 	for key, val := range testData {
 		for i := 0; i < 5; i++ {
 			w, err := st.Writer(key)
@@ -46,14 +44,12 @@ func (st *storeTester) Test(t *testing.T) {
 	}
 
 	log.Printf("Testing has")
-
 	for key := range testData {
 		require.True(t, st.Store.Has(key))
 		require.False(t, st.Store.Has(key+"doesn't exist"))
 	}
 
 	log.Printf("Testing reading")
-
 	for key, val := range testData {
 		for i := 0; i < 5; i++ {
 			r, err := st.Store.Reader(key)
@@ -72,7 +68,6 @@ func (st *storeTester) Test(t *testing.T) {
 	}
 
 	log.Printf("Testing copying")
-
 	for key, val := range testData {
 		n, err := store.Copy(key+"new", key, st.Store)
 		if err != nil {
@@ -83,7 +78,6 @@ func (st *storeTester) Test(t *testing.T) {
 	}
 
 	log.Printf("Testing deleting")
-
 	for key := range testData {
 		if err := st.Store.Delete(key); err != nil {
 			t.Fatal(err)
@@ -91,8 +85,6 @@ func (st *storeTester) Test(t *testing.T) {
 	}
 
 	log.Printf("Testing has not")
-
-	// test doesn't have keys
 	for key := range testData {
 		require.False(t, st.Store.Has(key))
 	}

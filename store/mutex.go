@@ -2,106 +2,98 @@ package store
 
 import (
 	"io"
+	"log"
+	"runtime"
 	"sync"
 )
 
-type KeyMutex struct {
-	entries map[string]*sync.RWMutex
+var debugMutex bool
+
+type storeMutex struct {
+	entries map[string]*keyMutex
 	mutex   sync.Mutex
 }
 
-func NewKeyMutex() *KeyMutex {
-	return &KeyMutex{
-		entries: map[string]*sync.RWMutex{},
+func newStoreMutex() *storeMutex {
+	return &storeMutex{
+		entries: map[string]*keyMutex{},
 	}
 }
 
-func (m *KeyMutex) mutexFor(key string) *sync.RWMutex {
+func (m *storeMutex) ForKey(key string) *keyMutex {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
 	if mutex, ok := m.entries[key]; ok {
 		return mutex
 	} else {
-		mutex := &sync.RWMutex{}
+		mutex := &keyMutex{&sync.RWMutex{}, key}
 		m.entries[key] = mutex
 		return mutex
 	}
 }
 
-func (m *KeyMutex) KeyLock(key string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	// log.Println(runtime.Caller(2))
-	// t := time.Now()
-	// log.Printf("waiting for write lock on %q", key)
-	m.mutexFor(key).Lock()
-	// log.Printf("acquired write lock on %q (took %s)", key, time.Now().Sub(t))
+type keyMutex struct {
+	*sync.RWMutex
+	key string
 }
 
-func (m *KeyMutex) KeyUnlock(key string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	// log.Printf("releasing write lock on %q", key)
-	m.mutexFor(key).Unlock()
+func (m *keyMutex) ReadCloser(rc io.ReadCloser) io.ReadCloser {
+	return &mutexReadCloser{rc, m}
 }
 
-func (m *KeyMutex) KeyRLock(key string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	// log.Println(runtime.Caller(2))
-	// t := time.Now()
-	// log.Printf("waiting for read lock on %q", key)
-	m.mutexFor(key).RLock()
-	// log.Printf("acquired read lock on %q (took %s)", key, time.Now().Sub(t))
+func (m *keyMutex) WriteCloser(wc io.WriteCloser) io.WriteCloser {
+	return &mutexWriteCloser{wc, m}
 }
 
-func (m *KeyMutex) KeyRUnlock(key string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	// log.Printf("releasing read lock on %q", key)
-	m.mutexFor(key).RUnlock()
-}
-
-func (m *KeyMutex) KeyRCloser(key string, rc io.ReadCloser) io.ReadCloser {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	return &MutexReadCloser{rc, m.mutexFor(key)}
-}
-
-func (m *KeyMutex) KeyWCloser(key string, wc io.WriteCloser) io.WriteCloser {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	return &MutexWriteCloser{wc, m.mutexFor(key)}
-}
-
-type MutexReadCloser struct {
-	io.ReadCloser
-	mutex *sync.RWMutex
-}
-
-func (m *MutexReadCloser) Close() error {
-	// log.Printf("releasing read lock")
-	defer m.mutex.RUnlock()
-	if err := m.ReadCloser.Close(); err != nil {
-		return err
+func (m *keyMutex) Lock() {
+	if debugMutex {
+		log.Printf("Acquiring write lock for %#v", m)
+		log.Println(runtime.Caller(2))
 	}
+	m.RWMutex.Lock()
+}
+
+func (m *keyMutex) Unlock() {
+	if debugMutex {
+		log.Printf("Releasing write lock for %#v", m)
+		log.Println(runtime.Caller(2))
+	}
+	m.RWMutex.Unlock()
+}
+
+func (m *keyMutex) RLock() {
+	if debugMutex {
+		log.Printf("Acquiring read lock for %#v", m)
+		log.Println(runtime.Caller(2))
+	}
+	m.RWMutex.RLock()
+}
+
+func (m *keyMutex) RUnlock() {
+	if debugMutex {
+		log.Printf("Releasing read lock for %#v", m)
+		log.Println(runtime.Caller(2))
+	}
+	m.RWMutex.RUnlock()
+}
+
+type mutexReadCloser struct {
+	io.ReadCloser
+	m *keyMutex
+}
+
+func (mrc *mutexReadCloser) Close() error {
+	mrc.m.RUnlock()
 	return nil
 }
 
-type MutexWriteCloser struct {
+type mutexWriteCloser struct {
 	io.WriteCloser
-	mutex *sync.RWMutex
+	m *keyMutex
 }
 
-func (m *MutexWriteCloser) Close() error {
-	// log.Printf("releasing write lock")
-	defer m.mutex.Unlock()
-	if err := m.WriteCloser.Close(); err != nil {
-		return err
-	}
+func (mwc *mutexWriteCloser) Close() error {
+	mwc.m.Unlock()
 	return nil
 }

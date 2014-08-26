@@ -10,7 +10,7 @@ import (
 
 type FileStore struct {
 	dir       string
-	mutex     *KeyMutex
+	mutex     *storeMutex
 	FileNamer func(k string) string
 }
 
@@ -20,13 +20,14 @@ func NewFileStore(dir string) (*FileStore, error) {
 	}
 
 	return &FileStore{
-		dir: dir, FileNamer: md5Namer, mutex: NewKeyMutex(),
+		dir: dir, FileNamer: md5Namer, mutex: newStoreMutex(),
 	}, nil
 }
 
 func (fs *FileStore) Has(key string) bool {
-	fs.mutex.KeyRLock(key)
-	defer fs.mutex.KeyRUnlock(key)
+	mutex := fs.mutex.ForKey(key)
+	mutex.RLock()
+	defer mutex.RUnlock()
 
 	if _, err := fs.file(key, os.O_RDONLY); err != nil {
 		return false
@@ -35,8 +36,9 @@ func (fs *FileStore) Has(key string) bool {
 }
 
 func (fs *FileStore) Delete(key string) error {
-	fs.mutex.KeyLock(key)
-	defer fs.mutex.KeyUnlock(key)
+	mutex := fs.mutex.ForKey(key)
+	mutex.Lock()
+	defer mutex.Unlock()
 
 	err := os.Remove(fs.filePath(key))
 	if err != nil && os.IsNotExist(err) {
@@ -46,26 +48,28 @@ func (fs *FileStore) Delete(key string) error {
 }
 
 func (fs *FileStore) Reader(key string) (io.ReadCloser, error) {
-	fs.mutex.KeyRLock(key)
+	mutex := fs.mutex.ForKey(key)
+	mutex.RLock()
 
 	f, err := fs.file(key, os.O_RDONLY)
 	if err != nil {
-		fs.mutex.KeyRUnlock(key)
+		mutex.RUnlock()
 		return nil, err
 	}
 
-	return fs.mutex.KeyRCloser(key, f), nil
+	return mutex.ReadCloser(f), nil
 }
 
 func (fs *FileStore) Writer(key string) (io.WriteCloser, error) {
-	fs.mutex.KeyLock(key)
+	mutex := fs.mutex.ForKey(key)
+	mutex.Lock()
 
 	f, err := fs.file(key, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		return nil, err
 	}
 
-	return fs.mutex.KeyWCloser(key, f), nil
+	return mutex.WriteCloser(f), nil
 }
 
 func (fs *FileStore) filePath(key string) string {
