@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"os"
 	"strings"
 	"time"
 )
@@ -28,6 +29,9 @@ func (l *responseLogger) Header() http.Header {
 func (l *responseLogger) Write(b []byte) (int, error) {
 	if l.status == 0 {
 		l.status = http.StatusOK
+	}
+	if l.status == http.StatusInternalServerError {
+		os.Stderr.Write(b)
 	}
 	size, err := l.w.Write(b)
 	l.size += size
