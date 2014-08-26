@@ -25,6 +25,6 @@ func TestFileStore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tester := &storeTester{}
+	tester := &storeTester{s}
 	tester.Test(t)
 }

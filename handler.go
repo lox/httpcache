@@ -107,17 +107,20 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 	Writes.Add(1)
 
 	go func() {
+		defer Writes.Done()
 		res.Save(RequestKey(r), h.store)
 
 		// Secondary store for vary
 		if vary := res.Header.Get("Vary"); vary != "" {
-			h.store.Copy(
+			_, err := store.Copy(
 				VaryKey(res.Header.Get("Vary"), r),
 				RequestKey(r),
+				h.store,
 			)
+			if err != nil {
+				log.Println(err)
+			}
 		}
-
-		Writes.Done()
 	}()
 }
 
