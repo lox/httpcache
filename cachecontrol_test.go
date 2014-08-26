@@ -1,7 +1,6 @@
 package httpcache_test
 
 import (
-	"reflect"
 	"testing"
 	"time"
 
@@ -44,18 +43,14 @@ func TestParsingCacheControl(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if !reflect.DeepEqual(cc1, expect.ccStruct) {
-			t.Fatalf("%#v != %#v", cc1, expect.ccStruct)
-		}
-
+		require.True(t, cc1.Equals(expect.ccStruct))
 		require.NotEmpty(t, cc1.String())
+
 		cc2, err := ParseCacheControl(cc1.String())
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if !reflect.DeepEqual(cc1, cc2) {
-			t.Fatalf("%#v != %#v", cc1, cc2)
-		}
+		require.True(t, cc1.Equals(cc2))
 	}
 }
