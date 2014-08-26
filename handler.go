@@ -90,11 +90,11 @@ func (h *Handler) serveUpstream(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("serving upstream")
 	h.upstream.ServeHTTP(rw, r)
-
 	res := rw.Resource()
 
 	if res.IsCacheable(h.Shared) {
-		log.Println("cacheable, storing")
+		ttl, _ := res.MaxAge(h.Shared)
+		log.Printf("cacheable, storing for %s", ttl.String())
 		rw.Header().Set(CacheHeader, "MISS")
 		h.storeResource(r, res)
 	} else {
