@@ -79,9 +79,6 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set(CacheHeader, "HIT")
 	}
 
-	log.Printf("%#v", res)
-	log.Printf("%#v", res.Response.Body)
-
 	log.Printf("response is fresh")
 	res.ServeHTTP(rw, r)
 }
