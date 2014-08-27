@@ -103,24 +103,19 @@ func (h *Handler) serveUpstream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) storeResource(r *http.Request, res *Resource) {
-	Writes.Add(1)
+	res.Save(RequestKey(r), h.store)
 
-	go func() {
-		defer Writes.Done()
-		res.Save(RequestKey(r), h.store)
-
-		// Secondary store for vary
-		if vary := res.Header.Get("Vary"); vary != "" {
-			_, err := store.Copy(
-				VaryKey(res.Header.Get("Vary"), r),
-				RequestKey(r),
-				h.store,
-			)
-			if err != nil {
-				log.Println(err)
-			}
+	// Secondary store for vary
+	if vary := res.Header.Get("Vary"); vary != "" {
+		_, err := store.Copy(
+			VaryKey(res.Header.Get("Vary"), r),
+			RequestKey(r),
+			h.store,
+		)
+		if err != nil {
+			log.Println(err)
 		}
-	}()
+	}
 }
 
 func (h *Handler) validate(r *request, res *Resource) (valid bool) {
