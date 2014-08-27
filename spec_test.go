@@ -1,6 +1,8 @@
 package httpcache_test
 
 import (
+	"io/ioutil"
+	"log"
 	"net/http"
 	"testing"
 	"time"
@@ -32,7 +34,10 @@ func testSetup() (*client, *upstreamServer) {
 	if testing.Verbose() {
 		handler = &httpcache.Logger{
 			Handler: hc,
+			Dump:    testing.Verbose(),
 		}
+	} else {
+		log.SetOutput(ioutil.Discard)
 	}
 
 	return &client{handler}, upstream
@@ -65,7 +70,7 @@ func TestSpecBasicCaching(t *testing.T) {
 	r2 := client.get("/")
 	assert.Equal(t, "HIT", r2.cacheStatus)
 	assert.Equal(t, string(upstream.Body), string(r2.body))
-	assert.Equal(t, 10, r2.age)
+	assert.Equal(t, time.Second*10, r2.age)
 }
 
 func TestSpecHeuristicCaching(t *testing.T) {
@@ -188,4 +193,14 @@ func TestSpecHeadersPropagated(t *testing.T) {
 	r2 := client.get("/")
 	assert.Equal(t, "HIT", r2.cacheStatus)
 	assert.Equal(t, []string{"1", "3", "2"}, r2.Header()["X-Llamas"])
+}
+
+func TestSpecAgeHeaderFromUpstream(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=86400"
+	upstream.Header.Set("Age", "3600") //1hr
+	assert.Equal(t, time.Hour, client.get("/").age)
+
+	upstream.timeTravel(time.Hour * 2)
+	assert.Equal(t, time.Hour*3, client.get("/").age)
 }

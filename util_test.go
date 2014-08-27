@@ -73,7 +73,7 @@ func (c *client) do(r *http.Request) *clientResponse {
 	return &clientResponse{
 		ResponseRecorder: rec,
 		cacheStatus:      rec.HeaderMap.Get(httpcache.CacheHeader),
-		age:              age,
+		age:              time.Second * time.Duration(age),
 		body:             rec.Body.Bytes(),
 	}
 }
@@ -97,7 +97,7 @@ func (c *client) post(path string, headers ...string) *clientResponse {
 type clientResponse struct {
 	*httptest.ResponseRecorder
 	cacheStatus string
-	age         int
+	age         time.Duration
 	body        []byte
 }
 

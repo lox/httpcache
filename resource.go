@@ -135,23 +135,23 @@ func (r *Resource) MustValidate() bool {
 }
 
 func (r *Resource) Age() (time.Duration, error) {
-	var d time.Duration
+	var age time.Duration
 
 	if ageHeader := r.Header.Get("Age"); ageHeader != "" {
 		if ageInt, err := strconv.Atoi(ageHeader); err == nil {
-			d = time.Second * time.Duration(ageInt)
+			age = time.Second * time.Duration(ageInt)
 		}
 	}
 
 	if dateHeader := r.Header.Get("Date"); dateHeader != "" {
 		if t, err := http.ParseTime(dateHeader); err != nil {
-			return d, err
+			return time.Duration(0), err
 		} else {
-			d = Clock().Sub(t)
+			return Clock().Sub(t) + age, nil
 		}
 	}
 
-	return d, nil
+	return time.Duration(0), errors.New("Unable to calculate age")
 }
 
 func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
