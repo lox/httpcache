@@ -1,8 +1,6 @@
 package httpcache_test
 
 import (
-	"io/ioutil"
-	"log"
 	"net/http"
 	"testing"
 	"time"
@@ -34,10 +32,7 @@ func testSetup() (*client, *upstreamServer) {
 	if testing.Verbose() {
 		handler = &httpcache.Logger{
 			Handler: hc,
-			Dump:    testing.Verbose(),
 		}
-	} else {
-		log.SetOutput(ioutil.Discard)
 	}
 
 	return &client{handler}, upstream

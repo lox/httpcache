@@ -2,7 +2,9 @@ package httpcache
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -14,6 +16,20 @@ import (
 const (
 	CacheHeader = "X-Cache"
 )
+
+var (
+	dumpHttp *bool
+)
+
+func init() {
+	dumpHttp = flag.Bool("dumphttp", false, "dumps http requests and responses")
+
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	log.Printf("%#v", *dumpHttp)
+}
 
 type responseLogger struct {
 	w      http.ResponseWriter
@@ -57,22 +73,21 @@ type Logger struct {
 }
 
 func (h *Logger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if h.Dump {
+	if h.Dump || *dumpHttp {
 		b, _ := httputil.DumpRequest(r, false)
-		log.Printf("Request:\n%s", b)
+		writePrefixString(strings.TrimSpace(string(b)), ">> ", os.Stderr)
 	}
 
 	logger := &responseLogger{w: w, t: time.Now()}
 	h.Handler.ServeHTTP(logger, r)
 
-	if h.Dump {
+	if h.Dump || *dumpHttp {
 		buf := &bytes.Buffer{}
 		buf.WriteString(fmt.Sprintf("HTTP/1.1 %d %s\r\n",
 			logger.status, http.StatusText(logger.status),
 		))
 		logger.w.Header().Write(buf)
-
-		log.Printf("Response:\n%s", buf.String())
+		writePrefixString(strings.TrimSpace(buf.String()), "<< ", os.Stderr)
 	}
 
 	h.writeLog(r, logger)
@@ -105,4 +120,14 @@ func (h *Logger) writeLog(r *http.Request, logger *responseLogger) {
 		cacheStatus,
 		time.Now().Sub(logger.t).String(),
 	)
+}
+
+func writePrefixString(s, prefix string, w io.Writer) {
+	w.Write([]byte("\n"))
+	for _, line := range strings.Split(s, "\r\n") {
+		w.Write([]byte(prefix))
+		w.Write([]byte(line))
+		w.Write([]byte("\n"))
+	}
+	w.Write([]byte("\n"))
 }
