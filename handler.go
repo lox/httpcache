@@ -62,17 +62,14 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Otherwise, Cache hit
-	rw.Header().Set(CacheHeader, "HIT")
-
 	// Sometimes we'll need to validate the resource
 	if req.mustValidate() || res.MustValidate() || !h.isFresh(req, res) {
 		log.Printf("validating cached response")
 
 		if !h.validate(req, res) {
 			log.Printf("response is changed")
-			rw.Header().Set(CacheHeader, "MISS")
 			h.serveUpstream(rw, r)
+			rw.Header().Set(CacheHeader, "MISS")
 			return
 		} else {
 			log.Printf("response is valid")
@@ -81,11 +78,13 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	log.Printf("response is fresh")
 	res.ServeHTTP(rw, r)
+
+	// Otherwise, Cache hit
+	rw.Header().Set(CacheHeader, "HIT")
 }
 
 func (h *Handler) serveUpstream(w http.ResponseWriter, r *http.Request) {
 	h.invalidate(r)
-
 	rw := newResponseWriter(w)
 
 	log.Printf("serving upstream")
@@ -95,8 +94,8 @@ func (h *Handler) serveUpstream(w http.ResponseWriter, r *http.Request) {
 	if res.IsCacheable(h.Shared) {
 		ttl, _ := res.MaxAge(h.Shared)
 		log.Printf("cacheable, storing for %s", ttl.String())
-		rw.Header().Set(CacheHeader, "MISS")
 		h.storeResource(r, res)
+		rw.Header().Set(CacheHeader, "MISS")
 	} else {
 		log.Println("not cacheable")
 		rw.Header().Set(CacheHeader, "SKIP")
