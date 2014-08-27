@@ -30,7 +30,7 @@ func (l *responseLogger) Write(b []byte) (int, error) {
 	if l.status == 0 {
 		l.status = http.StatusOK
 	}
-	if l.status == http.StatusInternalServerError {
+	if l.status < 200 || l.status >= 300 {
 		os.Stderr.Write(b)
 	}
 	size, err := l.w.Write(b)
