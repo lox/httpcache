@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/peterbourgon/diskv"
 )
@@ -35,7 +36,13 @@ func (fs *FileStore) Delete(key string) error {
 }
 
 func (fs *FileStore) Read(key string) (io.ReadCloser, error) {
-	return fs.d.ReadStream(hashKey(key), false)
+	r, err := fs.d.ReadStream(hashKey(key), false)
+
+	if os.IsNotExist(err) {
+		return nil, ErrNotExists
+	}
+
+	return r, err
 }
 
 func (fs *FileStore) WriteFrom(key string, r io.Reader) error {

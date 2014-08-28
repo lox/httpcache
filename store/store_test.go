@@ -41,6 +41,10 @@ func (st *storeTester) Test(t *testing.T) {
 		require.False(t, st.Store.Has(key+"doesn't exist"))
 	}
 
+	log.Printf("Testing missing key from read")
+	_, err := st.Store.Read("llamas-no-exist")
+	require.True(t, store.IsNotExists(err))
+
 	log.Printf("Testing reading")
 	for key, val := range testData {
 		for i := 0; i < 5; i++ {
