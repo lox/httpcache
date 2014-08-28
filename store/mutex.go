@@ -1,13 +1,20 @@
 package store
 
 import (
+	"flag"
 	"io"
 	"log"
 	"runtime"
 	"sync"
 )
 
-var debugMutex bool
+var (
+	debugMutex bool
+)
+
+func init() {
+	flag.BoolVar(&debugMutex, "debugmutex", false, "writes debug output for mutexes")
+}
 
 type storeMutex struct {
 	entries map[string]*keyMutex

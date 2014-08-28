@@ -18,17 +18,11 @@ const (
 )
 
 var (
-	dumpHttp *bool
+	dumpHttp bool
 )
 
 func init() {
-	dumpHttp = flag.Bool("dumphttp", false, "dumps http requests and responses")
-
-	if !flag.Parsed() {
-		flag.Parse()
-	}
-
-	log.Printf("%#v", *dumpHttp)
+	flag.BoolVar(&dumpHttp, "dumphttp", false, "dumps http requests and responses")
 }
 
 type responseLogger struct {
@@ -73,7 +67,7 @@ type Logger struct {
 }
 
 func (h *Logger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if h.Dump || *dumpHttp {
+	if h.Dump || dumpHttp {
 		b, _ := httputil.DumpRequest(r, false)
 		writePrefixString(strings.TrimSpace(string(b)), ">> ", os.Stderr)
 	}
@@ -81,7 +75,7 @@ func (h *Logger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	logger := &responseLogger{w: w, t: time.Now()}
 	h.Handler.ServeHTTP(logger, r)
 
-	if h.Dump || *dumpHttp {
+	if h.Dump || dumpHttp {
 		buf := &bytes.Buffer{}
 		buf.WriteString(fmt.Sprintf("HTTP/1.1 %d %s\r\n",
 			logger.status, http.StatusText(logger.status),
