@@ -16,12 +16,10 @@ const (
 
 var (
 	listen string
-	dump   bool
 )
 
 func init() {
 	flag.StringVar(&listen, "listen", defaultListen, "the host and port to bind to")
-	flag.BoolVar(&dump, "dump", false, "whether to dump requests and responses")
 	flag.Parse()
 }
 
@@ -36,7 +34,6 @@ func main() {
 
 	logger := &httpcache.Logger{
 		Handler: handler,
-		Dump:    dump,
 	}
 
 	log.Printf("proxy listening on http://%s", listen)

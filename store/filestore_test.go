@@ -20,7 +20,7 @@ func TestFileStore(t *testing.T) {
 	dir := testDir(t)
 	defer os.RemoveAll(dir)
 
-	s, err := store.NewFileStore(dir)
+	s, err := store.NewFileStore(dir, 1024*1024)
 	if err != nil {
 		t.Fatal(err)
 	}

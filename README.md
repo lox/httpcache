@@ -30,6 +30,9 @@ log.Fatal(http.ListenAndServe(listen, proxy))
 - Stale support w/ warnings 
 - Corrected Age calculations
 - Freshening stored responses
+- Store/No-store support
+- Offline operation
+- Handle key-based private headers
 
 ## Reading List
 

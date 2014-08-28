@@ -107,7 +107,7 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 
 	// Secondary store for vary
 	if vary := res.Header.Get("Vary"); vary != "" {
-		_, err := store.Copy(
+		err := store.Copy(
 			VaryKey(res.Header.Get("Vary"), r),
 			RequestKey(r),
 			h.store,

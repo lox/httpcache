@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"bytes"
-	"io"
 	"io/ioutil"
 	"log"
 	"strings"
@@ -29,15 +28,8 @@ func (st *storeTester) Test(t *testing.T) {
 	log.Printf("Testing writing")
 	for key, val := range testData {
 		for i := 0; i < 5; i++ {
-			w, err := st.Writer(key)
+			err := st.WriteFrom(key, bytes.NewReader(val))
 			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = io.Copy(w, bytes.NewReader(val))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = w.Close(); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -52,7 +44,7 @@ func (st *storeTester) Test(t *testing.T) {
 	log.Printf("Testing reading")
 	for key, val := range testData {
 		for i := 0; i < 5; i++ {
-			r, err := st.Store.Reader(key)
+			r, err := st.Store.Read(key)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,12 +61,20 @@ func (st *storeTester) Test(t *testing.T) {
 
 	log.Printf("Testing copying")
 	for key, val := range testData {
-		n, err := store.Copy(key+"new", key, st.Store)
+		err := store.Copy(key+"new", key, st.Store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r2, err := st.Store.Read(key + "new")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out2, err := ioutil.ReadAll(r2)
 		if err != nil {
 			t.Fatal(err)
 		}
 		require.True(t, st.Store.Has(key+"new"))
-		require.Equal(t, n, len(val))
+		assert.Equal(t, string(val), string(out2))
 	}
 
 	log.Printf("Testing deleting")
