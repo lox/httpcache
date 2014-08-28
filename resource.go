@@ -54,7 +54,7 @@ func NewResourceResponse(resp *http.Response) *Resource {
 }
 
 func LoadResource(key string, r *http.Request, s store.Store) (*Resource, error) {
-	rc, err := s.Reader(key)
+	rc, err := s.Read(key)
 
 	if store.IsNotExists(err) {
 		return nil, ErrNotFound
@@ -64,7 +64,6 @@ func LoadResource(key string, r *http.Request, s store.Store) (*Resource, error)
 		return nil, err
 	}
 
-	log.Printf("cache hit for %q", key)
 	resp, err := http.ReadResponse(bufio.NewReader(rc), r)
 	if err != nil {
 		return nil, err
@@ -74,17 +73,22 @@ func LoadResource(key string, r *http.Request, s store.Store) (*Resource, error)
 }
 
 func (r *Resource) Save(key string, s store.Store) error {
-	w, err := s.Writer(key)
-	if err != nil {
+	errorCh := make(chan error)
+	rd, wr := io.Pipe()
+
+	go func() {
+		if err := r.Response.Write(wr); err != nil {
+			errorCh <- err
+		}
+		wr.Close()
+		close(errorCh)
+	}()
+
+	if err := s.WriteFrom(key, rd); err != nil {
 		return err
 	}
 
-	defer w.Close()
-	if err = r.Response.Write(w); err != nil {
-		return err
-	}
-
-	return nil
+	return <-errorCh
 }
 
 func (r *Resource) cacheControl() (CacheControl, error) {
