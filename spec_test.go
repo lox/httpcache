@@ -108,18 +108,6 @@ func TestSpecRequestsWithoutHostHeader(t *testing.T) {
 		"Requests without a Host header should result in a 400")
 }
 
-func TestSpecHeadInvalidatesCachedGet(t *testing.T) {
-	client, upstream := testSetup()
-	upstream.CacheControl = "max-age=60"
-
-	assert.Equal(t, "MISS", client.get("/").cacheStatus)
-	assert.Equal(t, "HIT", client.get("/").cacheStatus)
-	assert.Equal(t, "HIT", client.head("/").cacheStatus)
-
-	assert.Equal(t, "SKIP", client.head("/", cc("no-cache")).cacheStatus)
-	assert.Equal(t, "MISS", client.get("/").cacheStatus)
-}
-
 func TestSpecValidatingStaleResponsesUnchanged(t *testing.T) {
 	client, upstream := testSetup()
 	upstream.CacheControl = "max-age=60"
