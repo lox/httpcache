@@ -60,7 +60,7 @@ func tmpFileStore(b *testing.B) (store.Store, string) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	s, err := store.NewFileStore(d, 10<<20)
+	s, err := store.NewFileStore(d)
 	if err != nil {
 		b.Fatal(err)
 	}

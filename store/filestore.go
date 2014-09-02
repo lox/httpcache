@@ -15,7 +15,7 @@ type FileStore struct {
 	dir string
 }
 
-func NewFileStore(dir string, maxSize uint64) (*FileStore, error) {
+func NewFileStore(dir string) (*FileStore, error) {
 	if err := os.MkdirAll(dir, 0777); err != nil {
 		return nil, err
 	}
