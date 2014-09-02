@@ -310,18 +310,17 @@ func (r *Resource) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
-	b, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		log.Println("Error reading resource", err)
-		http.Error(w, "Error reading resource: "+err.Error(),
-			http.StatusInternalServerError)
-		return
-	}
 
-	http.ServeContent(w, req, "", r.LastModified(), bytes.NewReader(b))
+	if readSeeker, ok := r.Body.(io.ReadSeeker); ok {
+		log.Printf("body is a ReadSeeker, using ServeContent")
+		http.ServeContent(w, req, "", r.LastModified(), readSeeker)
+	} else {
+		log.Printf("body is NOT a ReadSeeker, no range support")
 
-	if err := r.Close(); err != nil {
-		log.Println("Error closing resource", err)
+		n, err := io.Copy(w, r.Body)
+		if err != nil {
+			log.Printf("copied %d bytes: %s", n, err.Error())
+		}
 	}
 }
 
