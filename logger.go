@@ -26,14 +26,14 @@ func init() {
 }
 
 type responseLogger struct {
-	w      http.ResponseWriter
+	http.ResponseWriter
 	status int
 	size   int
 	t      time.Time
 }
 
 func (l *responseLogger) Header() http.Header {
-	return l.w.Header()
+	return l.ResponseWriter.Header()
 }
 
 func (l *responseLogger) Write(b []byte) (int, error) {
@@ -43,13 +43,13 @@ func (l *responseLogger) Write(b []byte) (int, error) {
 	if l.status < 200 || l.status >= 300 {
 		os.Stderr.Write(b)
 	}
-	size, err := l.w.Write(b)
+	size, err := l.ResponseWriter.Write(b)
 	l.size += size
 	return size, err
 }
 
 func (l *responseLogger) WriteHeader(s int) {
-	l.w.WriteHeader(s)
+	l.ResponseWriter.WriteHeader(s)
 	l.status = s
 }
 
@@ -72,7 +72,7 @@ func (h *Logger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writePrefixString(strings.TrimSpace(string(b)), ">> ", os.Stderr)
 	}
 
-	logger := &responseLogger{w: w, t: time.Now()}
+	logger := &responseLogger{ResponseWriter: w, t: time.Now()}
 	h.Handler.ServeHTTP(logger, r)
 
 	if h.Dump || dumpHttp {
@@ -80,7 +80,7 @@ func (h *Logger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		buf.WriteString(fmt.Sprintf("HTTP/1.1 %d %s\r\n",
 			logger.status, http.StatusText(logger.status),
 		))
-		logger.w.Header().Write(buf)
+		logger.ResponseWriter.Header().Write(buf)
 		writePrefixString(strings.TrimSpace(buf.String()), "<< ", os.Stderr)
 	}
 
@@ -88,7 +88,7 @@ func (h *Logger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Logger) writeLog(r *http.Request, logger *responseLogger) {
-	cacheStatus := logger.w.Header().Get(CacheHeader)
+	cacheStatus := logger.ResponseWriter.Header().Get(CacheHeader)
 
 	if strings.HasPrefix(cacheStatus, "HIT") {
 		cacheStatus = "\x1b[32;1mHIT\x1b[0m"
