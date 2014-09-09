@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -27,6 +28,7 @@ type Resource struct {
 	*http.Response
 	cc     CacheControl
 	closer io.Closer
+	seeker io.Seeker
 }
 
 func NewResource() *Resource {
@@ -69,7 +71,16 @@ func LoadResource(key string, r *http.Request, s store.Store) (*Resource, error)
 		return nil, err
 	}
 
-	return &Resource{Response: resp, closer: rc}, nil
+	res := &Resource{
+		Response: resp,
+		closer:   rc,
+	}
+
+	if s, ok := rc.(io.Seeker); ok {
+		res.seeker = s
+	}
+
+	return res, nil
 }
 
 func (r *Resource) Save(key string, s store.Store) error {
@@ -311,19 +322,42 @@ func (r *Resource) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
 
-	if readSeeker, ok := r.Body.(io.ReadSeeker); ok {
-		log.Printf("body is a ReadSeeker, using ServeContent")
-		http.ServeContent(w, req, "", r.LastModified(), readSeeker)
-	} else {
-		log.Printf("body is NOT a ReadSeeker, no range support")
+	var rs io.ReadSeeker
 
-		n, err := io.Copy(w, r.Body)
-		if err != nil {
-			log.Printf("copied %d bytes: %s", n, err.Error())
-		}
+	if bodySeeker, ok := r.Body.(io.ReadSeeker); ok {
+		log.Printf("body is a ReadSeeker, range supported")
+		rs = bodySeeker
+	} else {
+		rs = &serveContentSeeker{Reader: r.Body, length: r.ContentLength}
+
+		// log.Printf("body is NOT a ReadSeeker, range not supported")
+		// log.Printf("%#")
+		// n, err := io.Copy(w, r.Body)
+		// if err != nil {
+		// 	log.Printf("copied %d bytes: %s", n, err.Error())
+		// }
 	}
+
+	http.ServeContent(w, req, "", r.LastModified(), rs)
 }
 
 func (r *Resource) Close() error {
 	return r.closer.Close()
+}
+
+type serveContentSeeker struct {
+	io.Reader
+	length          int64
+	offset, voffset int64
+}
+
+func (s *serveContentSeeker) Seek(offset int64, whence int) (int64, error) {
+	if whence == os.SEEK_END && offset == 0 {
+		return s.length, nil
+	} else if whence == os.SEEK_SET && offset == 0 {
+		return 0, nil
+	}
+
+	return 0, fmt.Errorf(
+		"seek to %d (whence %d) not supported", offset, whence)
 }

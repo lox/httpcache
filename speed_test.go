@@ -105,6 +105,7 @@ func benchCacheable(b *testing.B, size int, s store.Store) {
 			w.WriteHeader(http.StatusOK)
 			io.Copy(w, bytes.NewReader(randomData[size]))
 		}))
+	h.Logger = log.New(ioutil.Discard, "", log.LstdFlags)
 
 	if testing.Verbose() == false {
 		h.Logger = log.New(ioutil.Discard, "", 0)

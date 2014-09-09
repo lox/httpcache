@@ -1,6 +1,8 @@
 package httpcache_test
 
 import (
+	"io/ioutil"
+	"log"
 	"net/http"
 	"testing"
 	"time"
@@ -33,6 +35,8 @@ func testSetup() (*client, *upstreamServer) {
 		handler = &httpcache.Logger{
 			Handler: hc,
 		}
+	} else {
+		hc.Logger = log.New(ioutil.Discard, "", log.LstdFlags)
 	}
 
 	return &client{handler}, upstream
@@ -66,6 +70,29 @@ func TestSpecBasicCaching(t *testing.T) {
 	assert.Equal(t, "HIT", r2.cacheStatus)
 	assert.Equal(t, string(upstream.Body), string(r2.body))
 	assert.Equal(t, time.Second*10, r2.age)
+}
+
+func TestSpecConditionalCaching(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.Etag = `"llamas"`
+
+	r1 := client.get("/")
+	assert.Equal(t, "MISS", r1.cacheStatus)
+	assert.Equal(t, string(upstream.Body), string(r1.body))
+
+	r2 := client.get("/", `If-None-Match: "llamas"`)
+	assert.Equal(t, http.StatusNotModified, r2.Code)
+	assert.Equal(t, "", string(r2.body))
+	assert.Equal(t, "HIT", r2.cacheStatus)
+}
+
+func TestSpecRangeRequests(t *testing.T) {
+	client, upstream := testSetup()
+
+	r1 := client.get("/", "Range: bytes=0-3")
+	assert.Equal(t, http.StatusPartialContent, r1.Code)
+	assert.Equal(t, "SKIP", r1.cacheStatus)
+	assert.Equal(t, string(upstream.Body[0:4]), string(r1.body))
 }
 
 func TestSpecHeuristicCaching(t *testing.T) {
@@ -119,6 +146,7 @@ func TestSpecValidatingStaleResponsesUnchanged(t *testing.T) {
 
 	r2 := client.get("/")
 	assert.Equal(t, http.StatusOK, r2.Code)
+	assert.Equal(t, string(upstream.Body), string(r2.body))
 	assert.Equal(t, "HIT", r2.cacheStatus)
 }
 

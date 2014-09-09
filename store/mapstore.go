@@ -35,7 +35,7 @@ func (m *MapStore) Read(key string) (io.ReadCloser, error) {
 	if !ok {
 		return nil, ErrNotExists
 	}
-	return ioutil.NopCloser(bytes.NewReader(b)), nil
+	return &nopSeekCloser{bytes.NewReader(b)}, nil
 }
 
 func (m *MapStore) WriteFrom(key string, r io.Reader) error {
@@ -53,5 +53,13 @@ func (m *MapStore) Delete(key string) error {
 	m.Lock()
 	defer m.Unlock()
 	delete(m.data, key)
+	return nil
+}
+
+type nopSeekCloser struct {
+	io.ReadSeeker
+}
+
+func (nop *nopSeekCloser) Close() error {
 	return nil
 }
