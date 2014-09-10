@@ -4,41 +4,87 @@ import (
 	"crypto/md5"
 	"fmt"
 	"io"
-
-	"github.com/peterbourgon/diskv"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"sync"
 )
 
 type FileStore struct {
-	d *diskv.Diskv
+	sync.RWMutex
+	dir string
 }
 
-func NewFileStore(dir string) *FileStore {
-	flatTransform := func(s string) []string { return []string{} }
-
-	return &FileStore{diskv.New(diskv.Options{
-		BasePath:  dir,
-		Transform: flatTransform,
-	})}
+func NewFileStore(dir string) (*FileStore, error) {
+	if err := os.MkdirAll(dir, 0777); err != nil {
+		return nil, err
+	}
+	return &FileStore{dir: dir}, nil
 }
 
 func (fs *FileStore) Has(key string) bool {
-	return fs.d.Has(fs.keyHash(key))
+	fs.RLock()
+	defer fs.RUnlock()
+
+	if _, err := os.Stat(fs.path(key)); err == nil {
+		return true
+	}
+
+	return false
 }
 
 func (fs *FileStore) Delete(key string) error {
-	return fs.d.Erase(fs.keyHash(key))
+	fs.Lock()
+	defer fs.Unlock()
+
+	os.Remove(fs.path(key))
+	return nil
 }
 
 func (fs *FileStore) Read(key string) (io.ReadCloser, error) {
-	return fs.d.ReadStream(fs.keyHash(key), false)
+	fs.RLock()
+	defer fs.RUnlock()
+
+	f, err := os.Open(fs.path(key))
+	if os.IsNotExist(err) {
+		return nil, ErrNotExists
+	} else if err != nil {
+		return nil, err
+	}
+
+	return f, nil
 }
 
 func (fs *FileStore) WriteFrom(key string, r io.Reader) error {
-	return fs.d.WriteStream(fs.keyHash(key), r, false)
+	fs.RLock()
+	defer fs.RUnlock()
+
+	tempFile, err := ioutil.TempFile(fs.dir, "tmp")
+	if err != nil {
+		return err
+	}
+
+	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
+
+	_, err = io.Copy(tempFile, r)
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(fs.path(key)); err == nil {
+		os.Remove(fs.path(key))
+	}
+
+	if err = os.Link(tempFile.Name(), fs.path(key)); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (fs *FileStore) keyHash(key string) string {
+func (fs *FileStore) path(key string) string {
 	h := md5.New()
 	io.WriteString(h, key)
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return filepath.Join(fs.dir, fmt.Sprintf("%x", h.Sum(nil)))
 }
