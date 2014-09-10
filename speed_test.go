@@ -67,6 +67,18 @@ func tmpFileStore(b *testing.B) (store.Store, string) {
 	return s, d
 }
 
+func tmpLevelDb(b *testing.B) (store.Store, string) {
+	d, err := ioutil.TempDir("", "speedtest")
+	if err != nil {
+		b.Fatal(err)
+	}
+	s, err := store.NewLevelDbStore(d)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return s, d
+}
+
 func genKeys() []string {
 	keys := make([]string, keyCount)
 	for i := 0; i < keyCount; i++ {
@@ -246,6 +258,41 @@ func BenchmarkCacheable_1M_FileStore(b *testing.B) {
 }
 
 func BenchmarkCacheable_10M_FileStore(b *testing.B) {
+	s, dir := tmpFileStore(b)
+	defer os.RemoveAll(dir)
+
+	benchCacheable(b, 10*mb, s)
+}
+
+func BenchmarkCacheable_32B_LevelDb(b *testing.B) {
+	s, dir := tmpLevelDb(b)
+	defer os.RemoveAll(dir)
+
+	benchCacheable(b, 32, s)
+}
+
+func BenchmarkCacheable_1K_LevelDb(b *testing.B) {
+	s, dir := tmpLevelDb(b)
+	defer os.RemoveAll(dir)
+
+	benchCacheable(b, 1*kb, s)
+}
+
+func BenchmarkCacheable_256K_LevelDb(b *testing.B) {
+	s, dir := tmpLevelDb(b)
+	defer os.RemoveAll(dir)
+
+	benchCacheable(b, 256*kb, s)
+}
+
+func BenchmarkCacheable_1M_LevelDb(b *testing.B) {
+	s, dir := tmpLevelDb(b)
+	defer os.RemoveAll(dir)
+
+	benchCacheable(b, 1*mb, s)
+}
+
+func BenchmarkCacheable_10M_LevelDb(b *testing.B) {
 	s, dir := tmpFileStore(b)
 	defer os.RemoveAll(dir)
 

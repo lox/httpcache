@@ -8,19 +8,15 @@ import (
 	"github.com/lox/httpcache/store"
 )
 
-func testDir(t *testing.T) string {
-	d, err := ioutil.TempDir("", "filestore")
+func TestLevelDb(t *testing.T) {
+	d, err := ioutil.TempDir("", "leveldb")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return d
-}
 
-func TestFileStore(t *testing.T) {
-	dir := testDir(t)
-	defer os.RemoveAll(dir)
+	defer os.RemoveAll(d)
 
-	s, err := store.NewFileStore(dir)
+	s, err := store.NewLevelDbStore(d)
 	if err != nil {
 		t.Fatal(err)
 	}
