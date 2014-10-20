@@ -214,3 +214,17 @@ func TestSpecAgeHeaderFromUpstream(t *testing.T) {
 	upstream.timeTravel(time.Hour * 2)
 	assert.Equal(t, time.Hour*3, client.get("/").age)
 }
+
+// http://coad.measurement-factory.com/cgi-bin/coad/GraseInfoCgi?session_id=54449bc3_14267_a9f27f49&info_id=test_clause/rfc2616/ageWarn
+func TestSpecWarningForOldContent(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.LastModified = upstream.Now.AddDate(-1, 0, 0)
+	assert.Equal(t, "MISS", client.get("/").cacheStatus)
+	modTime := upstream.Now.Format(http.TimeFormat)
+
+	upstream.timeTravel(time.Hour * 48)
+	r2 := client.get("/", "If-Modified-Since: "+modTime)
+	assert.Equal(t, "HIT", r2.cacheStatus)
+	assert.Equal(t, []string{"113 - \"Heuristic Expiration\""}, r2.Header()["Warning"])
+	assert.Equal(t, 2, upstream.requests, "The second request should validate")
+}

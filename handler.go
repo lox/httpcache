@@ -309,6 +309,10 @@ func (r *request) isBadRequest() (valid bool, reason string) {
 }
 
 func (r *request) mustValidate() bool {
+	if r.Request.Header.Get("If-Modified-Since") != "" {
+		return true
+	}
+
 	cc, err := r.cacheControl()
 	if err != nil {
 		return false
