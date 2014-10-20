@@ -39,6 +39,19 @@ func NewMemoryCache() *Cache {
 	return &Cache{vfs.Memory()}
 }
 
+// NewDiskCache returns a disk-backed cache
+func NewDiskCache(dir string) (*Cache, error) {
+	fs, err := vfs.FS(dir)
+	if err != nil {
+		return nil, err
+	}
+	chfs, err := vfs.Chroot("/", fs)
+	if err != nil {
+		return nil, err
+	}
+	return &Cache{chfs}, nil
+}
+
 func (c *Cache) vfsWrite(path string, r io.Reader) error {
 	if err := vfs.MkdirAll(c.fs, pathutil.Dir(path), 0700); err != nil {
 		return err

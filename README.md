@@ -17,7 +17,7 @@ proxy := &httputil.ReverseProxy{
     },
 }
 
-handler := httpcache.NewHandler(httpcache.NewMemCache(), proxy)
+handler := httpcache.NewHandler(httpcache.NewMemoryCache(), proxy)
 handler.Shared = true
 
 log.Printf("proxy listening on http://%s", listen)
