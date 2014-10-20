@@ -220,6 +220,10 @@ func (r *Resource) IsCacheable(shared bool) bool {
 		return false
 	}
 
+	if maxAge, _ := cc.Get("max-age"); maxAge == "0" {
+		return false
+	}
+
 	if r.header.Get("Authorization") != "" {
 		return false
 	}

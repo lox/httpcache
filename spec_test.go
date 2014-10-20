@@ -1,6 +1,7 @@
 package httpcache_test
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -42,18 +43,26 @@ func testSetup() (*client, *upstreamServer) {
 }
 
 func TestSpecNoCaching(t *testing.T) {
-	client, upstream := testSetup()
-	upstream.CacheControl = "max-age=0, no-cache"
+	var nocache = []string{
+		"max-age=0, no-cache",
+		"max-age=0",
+	}
 
-	r1 := client.get("/")
-	assert.Equal(t, http.StatusOK, r1.Code)
-	assert.Equal(t, "SKIP", r1.cacheStatus)
-	assert.Equal(t, string(upstream.Body), string(r1.body))
+	for _, cc := range nocache {
+		client, upstream := testSetup()
+		upstream.CacheControl = cc
 
-	r2 := client.get("/")
-	assert.Equal(t, http.StatusOK, r2.Code)
-	assert.Equal(t, "SKIP", r2.cacheStatus)
-	assert.Equal(t, string(upstream.Body), string(r1.body))
+		r1 := client.get("/")
+		assert.Equal(t, http.StatusOK, r1.Code)
+		assert.Equal(t, "SKIP", r1.cacheStatus,
+			fmt.Sprintf("Cache-Control of %q should SKIP", cc))
+		assert.Equal(t, string(upstream.Body), string(r1.body))
+
+		r2 := client.get("/")
+		assert.Equal(t, http.StatusOK, r2.Code)
+		assert.Equal(t, "SKIP", r2.cacheStatus)
+		assert.Equal(t, string(upstream.Body), string(r1.body))
+	}
 }
 
 func TestSpecBasicCaching(t *testing.T) {
