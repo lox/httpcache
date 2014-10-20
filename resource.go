@@ -53,6 +53,10 @@ func NewResourceBytes(statusCode int, b []byte, hdrs http.Header) *Resource {
 	}
 }
 
+func (r *Resource) Status() int {
+	return r.statusCode
+}
+
 func (r *Resource) Header() http.Header {
 	return r.header
 }

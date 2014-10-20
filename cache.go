@@ -65,13 +65,7 @@ func (c *Cache) Header(key string) (http.Header, error) {
 		return nil, err
 	}
 
-	tp := textproto.NewReader(bufio.NewReader(f))
-	mimeHeader, err := tp.ReadMIMEHeader()
-	if err != nil {
-		return nil, err
-	}
-
-	return http.Header(mimeHeader), nil
+	return readHeaders(bufio.NewReader(f))
 }
 
 // Store a resource against a number of keys
@@ -81,11 +75,7 @@ func (c *Cache) Store(res *Resource, keys ...string) error {
 		return err
 	}
 	h := &bytes.Buffer{}
-	if err = res.Header().Write(h); err != nil {
-		return err
-	}
-	// ReadMIMEHeader expects a trailing newline
-	h.Write([]byte("\r\n"))
+	writeHeaders(res.Header(), h)
 
 	for _, key := range keys {
 		if err := c.vfsWrite(bodyPrefix+hashKey(key), bytes.NewReader(b)); err != nil {
@@ -127,4 +117,22 @@ func hashKey(key string) string {
 	h := sha256.New()
 	io.WriteString(h, key)
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func readHeaders(r *bufio.Reader) (http.Header, error) {
+	tp := textproto.NewReader(r)
+	mimeHeader, err := tp.ReadMIMEHeader()
+	if err != nil {
+		return nil, err
+	}
+	return http.Header(mimeHeader), nil
+}
+
+func writeHeaders(h http.Header, w io.Writer) error {
+	if err := h.Write(w); err != nil {
+		return err
+	}
+	// ReadMIMEHeader expects a trailing newline
+	_, err := w.Write([]byte("\r\n"))
+	return err
 }
