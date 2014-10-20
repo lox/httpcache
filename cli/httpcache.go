@@ -7,7 +7,6 @@ import (
 	"net/http/httputil"
 
 	"github.com/lox/httpcache"
-	"github.com/lox/httpcache/store"
 )
 
 const (
@@ -29,7 +28,7 @@ func main() {
 		},
 	}
 
-	handler := httpcache.NewHandler(store.NewMapStore(), proxy)
+	handler := httpcache.NewHandler(&httpcache.Cache{}, proxy)
 	handler.Shared = true
 
 	logger := &httpcache.Logger{

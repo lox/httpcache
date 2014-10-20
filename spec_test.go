@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/lox/httpcache"
-	"github.com/lox/httpcache/store"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -25,7 +24,7 @@ func testSetup() (*client, *upstreamServer) {
 	}
 
 	hc := httpcache.NewHandler(
-		store.NewMapStore(),
+		httpcache.NewMapCache(),
 		upstream,
 	)
 

@@ -1,19 +1,13 @@
 package httpcache
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
-
-	"github.com/lox/httpcache/store"
 )
 
 const (
@@ -24,90 +18,50 @@ var Clock = func() time.Time {
 	return time.Now()
 }
 
+type ReadSeekCloser interface {
+	io.Reader
+	io.Seeker
+	io.Closer
+}
+
+type byteReadSeekCloser struct {
+	*bytes.Reader
+}
+
+func (brsc *byteReadSeekCloser) Close() error { return nil }
+
 type Resource struct {
-	*http.Response
-	cc     CacheControl
-	closer io.Closer
-	seeker io.Seeker
+	ReadSeekCloser
+	header     http.Header
+	statusCode int
+	cc         CacheControl
 }
 
-func NewResource() *Resource {
+func NewResource(statusCode int, body ReadSeekCloser, hdrs http.Header) *Resource {
 	return &Resource{
-		Response: &http.Response{
-			Proto:      "HTTP/1.1",
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Body:       ioutil.NopCloser(bytes.NewReader([]byte{})),
-			Header:     make(http.Header),
-		},
+		header:         hdrs,
+		ReadSeekCloser: body,
+		statusCode:     statusCode,
 	}
 }
 
-func NewResourceString(s string) *Resource {
-	res := NewResource()
-	res.Body = ioutil.NopCloser(bytes.NewReader([]byte(s)))
-	return res
-}
-
-func NewResourceResponse(resp *http.Response) *Resource {
+func NewResourceBytes(statusCode int, b []byte, hdrs http.Header) *Resource {
 	return &Resource{
-		Response: resp,
+		header:         hdrs,
+		statusCode:     statusCode,
+		ReadSeekCloser: &byteReadSeekCloser{bytes.NewReader(b)},
 	}
 }
 
-func LoadResource(key string, r *http.Request, s store.Store) (*Resource, error) {
-	rc, err := s.Read(key)
-
-	if store.IsNotExists(err) {
-		return nil, ErrNotFound
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := http.ReadResponse(bufio.NewReader(rc), r)
-	if err != nil {
-		return nil, err
-	}
-
-	res := &Resource{
-		Response: resp,
-		closer:   rc,
-	}
-
-	if s, ok := rc.(io.Seeker); ok {
-		res.seeker = s
-	}
-
-	return res, nil
-}
-
-func (r *Resource) Save(key string, s store.Store) error {
-	errorCh := make(chan error)
-	rd, wr := io.Pipe()
-
-	go func() {
-		if err := r.Response.Write(wr); err != nil {
-			errorCh <- err
-		}
-		wr.Close()
-		close(errorCh)
-	}()
-
-	if err := s.WriteFrom(key, rd); err != nil {
-		return err
-	}
-
-	return <-errorCh
+func (r *Resource) Header() http.Header {
+	return r.header
 }
 
 func (r *Resource) cacheControl() (CacheControl, error) {
 	if r.cc != nil {
 		return r.cc, nil
 	}
-
-	cc, err := ParseCacheControl(r.Header.Get("Cache-Control"))
+	cc, err := ParseCacheControl(r.header.Get("Cache-Control"))
 	if err != nil {
 		return cc, err
 	}
@@ -119,7 +73,7 @@ func (r *Resource) cacheControl() (CacheControl, error) {
 func (r *Resource) LastModified() time.Time {
 	var modTime time.Time
 
-	if lastModHeader := r.Header.Get("Last-Modified"); lastModHeader != "" {
+	if lastModHeader := r.header.Get("Last-Modified"); lastModHeader != "" {
 		if t, err := http.ParseTime(lastModHeader); err == nil {
 			modTime = t
 		}
@@ -129,7 +83,7 @@ func (r *Resource) LastModified() time.Time {
 }
 
 func (r *Resource) Expires() (time.Time, error) {
-	if expires := r.Header.Get("Expires"); expires != "" {
+	if expires := r.header.Get("Expires"); expires != "" {
 		return http.ParseTime(expires)
 	}
 
@@ -152,13 +106,13 @@ func (r *Resource) MustValidate() bool {
 func (r *Resource) Age() (time.Duration, error) {
 	var age time.Duration
 
-	if ageHeader := r.Header.Get("Age"); ageHeader != "" {
+	if ageHeader := r.header.Get("Age"); ageHeader != "" {
 		if ageInt, err := strconv.Atoi(ageHeader); err == nil {
 			age = time.Second * time.Duration(ageInt)
 		}
 	}
 
-	if dateHeader := r.Header.Get("Date"); dateHeader != "" {
+	if dateHeader := r.header.Get("Date"); dateHeader != "" {
 		if t, err := http.ParseTime(dateHeader); err != nil {
 			return time.Duration(0), err
 		} else {
@@ -191,7 +145,7 @@ func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
 		}
 	}
 
-	if expiresVal := r.Header.Get("Expires"); expiresVal != "" {
+	if expiresVal := r.header.Get("Expires"); expiresVal != "" {
 		expires, err := http.ParseTime(expiresVal)
 		if err != nil {
 			return time.Duration(0), err
@@ -208,59 +162,15 @@ func (r *Resource) HasExplicitFreshness() bool {
 		return false
 	}
 
-	return cc.Has("max-age") || cc.Has("public") || r.Header.Get("Expires") != ""
+	return cc.Has("max-age") || cc.Has("public") || r.header.Get("Expires") != ""
 }
 
 func (r *Resource) HeuristicFreshness() time.Duration {
-	if r.Header.Get("Last-Modified") != "" && !r.HasExplicitFreshness() {
+	if r.header.Get("Last-Modified") != "" && !r.HasExplicitFreshness() {
 		return Clock().Sub(r.LastModified()) / time.Duration(lastModDivisor)
 	}
 
 	return time.Duration(0)
-}
-
-func (r *Resource) IsCacheable(shared bool) bool {
-	if !isStatusCodeCacheable(r.StatusCode) {
-		return false
-	}
-
-	cc, err := r.cacheControl()
-	if err != nil {
-		log.Println("Error parsing cache-control: ", err)
-		return false
-	}
-
-	if cc.Has("no-cache") {
-		return false
-	}
-
-	if cc.Has("no-store") {
-		return false
-	}
-
-	if cc.Has("private") && shared {
-		return false
-	}
-
-	if r.Header.Get("Authorization") != "" {
-		return false
-	}
-
-	if r.Header.Get("Last-Modified") != "" || r.Header.Get("Etag") != "" {
-		return true
-	}
-
-	if r.Header.Get("Expires") != "" {
-		if _, err := r.Expires(); err != nil {
-			return false
-		}
-	}
-
-	if r.HasExplicitFreshness() {
-		return true
-	}
-
-	return false
 }
 
 func isStatusCodeCacheable(status int) bool {
@@ -283,6 +193,50 @@ func isStatusCodeCacheable(status int) bool {
 	return false
 }
 
+func (r *Resource) IsCacheable(shared bool) bool {
+	if !isStatusCodeCacheable(r.statusCode) {
+		return false
+	}
+
+	cc, err := r.cacheControl()
+	if err != nil {
+		log.Println("Error parsing cache-control: ", err)
+		return false
+	}
+
+	if cc.Has("no-cache") {
+		return false
+	}
+
+	if cc.Has("no-store") {
+		return false
+	}
+
+	if cc.Has("private") && shared {
+		return false
+	}
+
+	if r.header.Get("Authorization") != "" {
+		return false
+	}
+
+	if r.header.Get("Last-Modified") != "" || r.header.Get("Etag") != "" {
+		return true
+	}
+
+	if r.header.Get("Expires") != "" {
+		if _, err := r.Expires(); err != nil {
+			return false
+		}
+	}
+
+	if r.HasExplicitFreshness() {
+		return true
+	}
+
+	return false
+}
+
 func (r *Resource) Warnings() ([]string, error) {
 	warns := []string{}
 
@@ -299,65 +253,4 @@ func (r *Resource) Warnings() ([]string, error) {
 	}
 
 	return warns, nil
-}
-
-func (r *Resource) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	for key, headers := range r.Header {
-		for _, header := range headers {
-			w.Header().Add(key, header)
-		}
-	}
-
-	age, err := r.Age()
-	if err != nil {
-		http.Error(w, "Error calculating age: "+err.Error(),
-			http.StatusInternalServerError)
-		return
-	}
-
-	warnings, _ := r.Warnings()
-	for _, warn := range warnings {
-		w.Header().Add("Warning", warn)
-	}
-
-	w.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
-
-	var rs io.ReadSeeker
-
-	if bodySeeker, ok := r.Body.(io.ReadSeeker); ok {
-		log.Printf("body is a ReadSeeker, range supported")
-		rs = bodySeeker
-	} else {
-		rs = &serveContentSeeker{Reader: r.Body, length: r.ContentLength}
-
-		// log.Printf("body is NOT a ReadSeeker, range not supported")
-		// log.Printf("%#")
-		// n, err := io.Copy(w, r.Body)
-		// if err != nil {
-		// 	log.Printf("copied %d bytes: %s", n, err.Error())
-		// }
-	}
-
-	http.ServeContent(w, req, "", r.LastModified(), rs)
-}
-
-func (r *Resource) Close() error {
-	return r.closer.Close()
-}
-
-type serveContentSeeker struct {
-	io.Reader
-	length          int64
-	offset, voffset int64
-}
-
-func (s *serveContentSeeker) Seek(offset int64, whence int) (int64, error) {
-	if whence == os.SEEK_END && offset == 0 {
-		return s.length, nil
-	} else if whence == os.SEEK_SET && offset == 0 {
-		return 0, nil
-	}
-
-	return 0, fmt.Errorf(
-		"seek to %d (whence %d) not supported", offset, whence)
 }

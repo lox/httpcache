@@ -2,15 +2,10 @@ package httpcache_test
 
 import (
 	"testing"
-	"time"
 
 	. "github.com/lox/httpcache"
 	"github.com/stretchr/testify/require"
 )
-
-func durationRef(d time.Duration) *time.Duration {
-	return &d
-}
 
 func TestParsingCacheControl(t *testing.T) {
 	table := []struct {
