@@ -46,6 +46,7 @@ func TestSpecNoCaching(t *testing.T) {
 	var nocache = []string{
 		"max-age=0, no-cache",
 		"max-age=0",
+		"s-maxage=0",
 	}
 
 	for _, cc := range nocache {
