@@ -127,7 +127,6 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *http.Request) {
-	log.Printf("serving resource %#v", res)
 	for key, headers := range res.Header() {
 		for _, header := range headers {
 			w.Header().Add(key, header)
@@ -166,8 +165,6 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 		if err := h.cache.Store(res, keys...); err != nil {
 			h.Logger.Println("storing resource failed", keys, err)
 		}
-
-		log.Printf("storing resource finished")
 	}()
 }
 

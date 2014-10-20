@@ -11,7 +11,7 @@ import (
 
 func TestSaveResource(t *testing.T) {
 	var body = strings.Repeat("llamas", 5000)
-	var cache = httpcache.NewMapCache()
+	var cache = httpcache.NewMemoryCache()
 
 	res := httpcache.NewResourceBytes(http.StatusOK, []byte(body), http.Header{
 		"Llamas": []string{"true"},

@@ -24,7 +24,7 @@ func testSetup() (*client, *upstreamServer) {
 	}
 
 	hc := httpcache.NewHandler(
-		httpcache.NewMapCache(),
+		httpcache.NewMemoryCache(),
 		upstream,
 	)
 
