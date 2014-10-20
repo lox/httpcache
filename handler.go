@@ -373,10 +373,4 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 // Resource returns a copy of the responseWriter as a Resource object
 func (rw *responseWriter) Resource() *Resource {
 	return NewResourceBytes(rw.statusCode, rw.buf.Bytes(), rw.Header())
-	// res := NewResourceString(rw.buf.Bytes())
-	// res.StatusCode = rw.statusCode
-	// res.Header = rw.Header()
-	// res.Body = ioutil.NopCloser(bytes.NewReader(rw.buf.Bytes()))
-	// res.ContentLength = int64(rw.buf.Len())
-	// return res
 }
