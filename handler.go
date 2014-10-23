@@ -32,14 +32,12 @@ func NewHandler(cache *Cache, upstream http.Handler) *Handler {
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	req := &request{Request: r}
 
-	// Preconditions
 	if bad, reason := req.isBadRequest(); bad {
 		http.Error(rw, "invalid request: "+reason,
 			http.StatusBadRequest)
 		return
 	}
 
-	// Request might not be cacheable
 	if !req.isCacheable() {
 		h.Logger.Printf("request not cacheable")
 		rw.Header().Set(CacheHeader, "SKIP")
@@ -47,7 +45,6 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lookup cached resource
 	res, err := h.lookup(req)
 	if err != nil && err != ErrNotFoundInCache {
 		http.Error(rw, "lookup error: "+err.Error(),
@@ -55,19 +52,12 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache miss
 	if err == ErrNotFoundInCache {
 		h.Logger.Printf("%s %s not in cache", r.Method, r.URL.String())
 		h.passUpstream(rw, r)
 		return
 	} else {
 		h.Logger.Printf("%s %s found in cache", r.Method, r.URL.String())
-	}
-
-	if !res.IsCacheable(h.Shared) {
-		h.Logger.Printf("stored, but not cacheable")
-		h.passUpstream(rw, r)
-		return
 	}
 
 	if h.needsValidation(res, req) {
@@ -142,21 +132,24 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *http.Request) {
 
 	h.Logger.Printf("upstream responded in %s", time.Now().Sub(t))
 
-	if h.isStoreable(&request{Request: r}, res) {
-		ttl, _ := res.MaxAge(h.Shared)
-		if ttl == 0 && !res.HasExplicitFreshness() {
-			ttl = res.HeuristicFreshness()
-		}
-
-		h.Logger.Printf("storing resource, ttl of %s", ttl)
-		h.storeResource(r, res)
-	}
-
-	if res.IsCacheable(h.Shared) {
-		rw.Header().Set(CacheHeader, "MISS")
-	} else {
+	if res.IsUncacheable(h.Shared) {
+		h.Logger.Printf("resource is uncacheable")
 		rw.Header().Set(CacheHeader, "SKIP")
+		return
 	}
+
+	if res.HasExplicitFreshness() {
+		h.Logger.Printf("resource has explicit freshness")
+	} else if r.Method == "GET" && res.HasValidators() {
+		h.Logger.Printf("resource has validators")
+	} else {
+		h.Logger.Printf("resource has no explicit freshness or validators")
+		rw.Header().Set(CacheHeader, "SKIP")
+		return
+	}
+
+	rw.Header().Set(CacheHeader, "MISS")
+	h.storeResource(r, res)
 }
 
 func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *http.Request) {
@@ -187,6 +180,7 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 
 	go func() {
 		defer Writes.Done()
+		t := time.Now()
 		keys := []string{RequestKey(r)}
 		headers := res.Header()
 
@@ -198,6 +192,8 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 		if err := h.cache.Store(res, keys...); err != nil {
 			h.Logger.Println("storing resource failed", keys, err)
 		}
+
+		h.Logger.Printf("stored resources %+v in %s", keys, time.Now().Sub(t))
 	}()
 }
 
@@ -234,11 +230,19 @@ func (h *Handler) validate(r *request, res *Resource) (valid bool) {
 func (h *Handler) lookup(r *request) (*Resource, error) {
 	res, err := h.cache.Retrieve(Key(r.Method, r.URL))
 
-	// HEAD requests can be served from GET
+	// HEAD requests can possibly be served from GET
 	if err == ErrNotFoundInCache && r.Method == "HEAD" {
 		res, err = h.cache.Retrieve(Key("GET", r.URL))
 		if err != nil {
-			return res, err
+			return nil, err
+		}
+
+		// but only if there is explicit freshness
+		if res.HasExplicitFreshness() && r.isCacheable() {
+			h.Logger.Printf("using cached GET request for serving HEAD")
+			return res, nil
+		} else {
+			return nil, ErrNotFoundInCache
 		}
 	} else if err != nil {
 		return res, err
@@ -253,23 +257,6 @@ func (h *Handler) lookup(r *request) (*Resource, error) {
 	}
 
 	return res, nil
-}
-
-func (h *Handler) isStoreable(r *request, res *Resource) bool {
-	cc, err := res.cacheControl()
-	if err != nil {
-		return false
-	}
-
-	if cc.Has("no-store") {
-		return true
-	}
-
-	if r.Request.Method == "GET" || r.Method == "HEAD" {
-		return true
-	}
-
-	return false
 }
 
 func (h *Handler) invalidate(r *http.Request) {

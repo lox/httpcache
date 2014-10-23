@@ -160,6 +160,14 @@ func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
 	return time.Duration(0), nil
 }
 
+func (r *Resource) HasValidators() bool {
+	if r.header.Get("Last-Modified") != "" || r.header.Get("Etag") != "" {
+		return true
+	}
+
+	return false
+}
+
 func (r *Resource) HasExplicitFreshness() bool {
 	cc, err := r.cacheControl()
 	if err != nil {
@@ -197,48 +205,31 @@ func isStatusCodeCacheable(status int) bool {
 	return false
 }
 
-func (r *Resource) IsCacheable(shared bool) bool {
+func (r *Resource) IsUncacheable(shared bool) bool {
 	if !isStatusCodeCacheable(r.statusCode) {
-		return false
+		return true
 	}
 
 	cc, err := r.cacheControl()
 	if err != nil {
 		log.Println("Error parsing cache-control: ", err)
-		return false
-	}
-
-	if cc.Has("no-cache") {
-		return false
-	}
-
-	if cc.Has("no-store") {
-		return false
-	}
-
-	if cc.Has("private") && shared {
-		return false
-	}
-
-	if maxAge, _ := cc.Get("max-age"); maxAge == "0" {
-		return false
-	}
-
-	if r.header.Get("Authorization") != "" {
-		return false
-	}
-
-	if r.header.Get("Last-Modified") != "" || r.header.Get("Etag") != "" {
 		return true
 	}
 
-	if r.header.Get("Expires") != "" {
-		if _, err := r.Expires(); err != nil {
-			return false
-		}
+	if cc.Has("no-cache") || cc.Has("no-store") || (cc.Has("private") && shared) {
+		return true
 	}
 
-	if r.HasExplicitFreshness() {
+	if maxAge, _ := cc.Get("max-age"); maxAge == "0" {
+		return true
+	}
+
+	if r.header.Get("Authorization") != "" {
+		return true
+	}
+
+	// malformed expires header is uncacheable
+	if _, err = r.Expires(); r.header.Get("Expires") != "" && err != nil {
 		return true
 	}
 

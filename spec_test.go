@@ -255,3 +255,17 @@ func TestSpecWarningForOldContent(t *testing.T) {
 	assert.Equal(t, []string{"113 - \"Heuristic Expiration\""}, r2.Header()["Warning"])
 	assert.Equal(t, 2, upstream.requests, "The second request should validate")
 }
+
+func TestSpecHeadCanBeServedFromCacheOnlyWithExplicitFreshness(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=3600"
+	assert.Equal(t, "MISS", client.get("/explicit").cacheStatus)
+	assert.Equal(t, "HIT", client.head("/explicit").cacheStatus)
+	assert.Equal(t, "HIT", client.head("/explicit").cacheStatus)
+
+	upstream.CacheControl = ""
+	upstream.LastModified = upstream.Now.AddDate(-1, 0, 0)
+	assert.Equal(t, "MISS", client.get("/implicit").cacheStatus)
+	assert.Equal(t, "SKIP", client.head("/implicit").cacheStatus)
+	assert.Equal(t, "SKIP", client.head("/implicit").cacheStatus)
+}
