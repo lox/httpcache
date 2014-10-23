@@ -75,6 +75,7 @@ func (c *client) do(r *http.Request) *clientResponse {
 		cacheStatus:      rec.HeaderMap.Get(httpcache.CacheHeader),
 		age:              time.Second * time.Duration(age),
 		body:             rec.Body.Bytes(),
+		header:           rec.HeaderMap,
 	}
 }
 
@@ -99,6 +100,7 @@ type clientResponse struct {
 	cacheStatus string
 	age         time.Duration
 	body        []byte
+	header      http.Header
 }
 
 type upstreamServer struct {

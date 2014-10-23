@@ -70,8 +70,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sometimes we'll need to validate the resource
-	if req.mustValidate() || res.MustValidate() || !h.isFresh(req, res) {
+	if h.needsValidation(res, req) {
 		h.Logger.Printf("validating cached response")
 
 		if !h.validate(req, res) {
@@ -83,13 +82,47 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.Logger.Printf("response is fresh")
 	h.serveResource(res, rw, r)
 	rw.Header().Set(CacheHeader, "HIT")
 
 	if err := res.Close(); err != nil {
 		log.Println("Error closing resource", err)
 	}
+}
+
+func (h *Handler) needsValidation(res *Resource, req *request) bool {
+	if req.mustValidate() || res.MustValidate() {
+		return true
+	}
+
+	maxAge, err := res.MaxAge(h.Shared)
+	if err != nil {
+		h.Logger.Printf("error calculating max-age: %s", err.Error())
+		return true
+	}
+
+	age, err := res.Age()
+	if err != nil {
+		h.Logger.Printf("error calculating age: %s", err.Error())
+		return true
+	}
+
+	if hFresh := res.HeuristicFreshness(); hFresh > age {
+		h.Logger.Printf("heuristic freshness of %q", hFresh)
+		return false
+	}
+
+	if age > maxAge {
+		h.Logger.Printf("age %q > max-age %q", age, maxAge)
+		maxStale, _ := req.maxStale()
+		if maxStale > (age - maxAge) {
+			h.Logger.Printf("stale, but within allowed max-stale period of %s", maxStale)
+			return false
+		}
+		return true
+	}
+
+	return false
 }
 
 // pipeUpstream makes the request via the upstream handler, the response is not stored or modified
@@ -239,32 +272,6 @@ func (h *Handler) isStoreable(r *request, res *Resource) bool {
 	return false
 }
 
-func (h *Handler) isFresh(r *request, res *Resource) bool {
-	maxAge, err := res.MaxAge(h.Shared)
-	if err != nil {
-		h.Logger.Printf("error calculating max-age: %s", err.Error())
-		return false
-	}
-
-	age, err := res.Age()
-	if err != nil {
-		h.Logger.Printf("error calculating age: %s", err.Error())
-		return false
-	}
-
-	if maxAge > age {
-		h.Logger.Printf("max-age is %q, age is %q", maxAge, age)
-		return true
-	}
-
-	if hFresh := res.HeuristicFreshness(); hFresh > age {
-		h.Logger.Printf("heuristic freshness of %q", hFresh)
-		return true
-	}
-
-	return false
-}
-
 func (h *Handler) invalidate(r *http.Request) {
 	Writes.Add(1)
 	go func() {
@@ -319,6 +326,19 @@ func (r *request) mustValidate() bool {
 	}
 
 	return cc.Has("no-cache")
+}
+
+func (r *request) maxStale() (time.Duration, error) {
+	cc, err := r.cacheControl()
+	if err != nil {
+		return time.Duration(0), err
+	}
+
+	if cc.Has("max-stale") {
+		return cc.Duration("max-stale")
+	}
+
+	return time.Duration(0), nil
 }
 
 func (r *request) cacheControl() (CacheControl, error) {

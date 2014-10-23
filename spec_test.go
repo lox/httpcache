@@ -144,6 +144,23 @@ func TestSpecRequestsWithoutHostHeader(t *testing.T) {
 		"Requests without a Host header should result in a 400")
 }
 
+func TestSpecCacheControlMaxStale(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=60"
+	assert.Equal(t, "MISS", client.get("/").cacheStatus)
+
+	upstream.timeTravel(time.Second * 90)
+	upstream.Body = []byte("brand new content")
+	r2 := client.get("/", "Cache-Control: max-stale=3600")
+	assert.Equal(t, "HIT", r2.cacheStatus)
+	assert.Equal(t, time.Second*90, r2.age)
+
+	upstream.timeTravel(time.Second * 90)
+	r3 := client.get("/")
+	assert.Equal(t, "MISS", r3.cacheStatus)
+	assert.Equal(t, 0, r3.age)
+}
+
 func TestSpecValidatingStaleResponsesUnchanged(t *testing.T) {
 	client, upstream := testSetup()
 	upstream.CacheControl = "max-age=60"
