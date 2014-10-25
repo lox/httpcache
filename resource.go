@@ -91,7 +91,7 @@ func (r *Resource) Expires() (time.Time, error) {
 		return http.ParseTime(expires)
 	}
 
-	return time.Time{}, errors.New("No expires header present")
+	return time.Time{}, nil
 }
 
 func (r *Resource) MustValidate() bool {
@@ -168,72 +168,33 @@ func (r *Resource) HasValidators() bool {
 	return false
 }
 
-func (r *Resource) HasExplicitFreshness() bool {
+func (r *Resource) HasExplicitExpiration() bool {
 	cc, err := r.cacheControl()
 	if err != nil {
 		return false
 	}
 
-	return cc.Has("max-age") || cc.Has("public") || r.header.Get("Expires") != ""
+	if d, _ := cc.Duration("max-age"); d > time.Duration(0) {
+		return true
+	}
+
+	if d, _ := cc.Duration("s-maxage"); d > time.Duration(0) {
+		return true
+	}
+
+	if exp, _ := r.Expires(); !exp.IsZero() {
+		return true
+	}
+
+	return false
 }
 
 func (r *Resource) HeuristicFreshness() time.Duration {
-	if r.header.Get("Last-Modified") != "" && !r.HasExplicitFreshness() {
+	if r.header.Get("Last-Modified") != "" {
 		return Clock().Sub(r.LastModified()) / time.Duration(lastModDivisor)
 	}
 
 	return time.Duration(0)
-}
-
-func isStatusCodeCacheable(status int) bool {
-	allowed := []int{
-		http.StatusOK,
-		http.StatusFound,
-		http.StatusNotModified,
-		http.StatusNonAuthoritativeInfo,
-		http.StatusMultipleChoices,
-		http.StatusMovedPermanently,
-		http.StatusGone,
-	}
-
-	for _, a := range allowed {
-		if a == status {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (r *Resource) IsUncacheable(shared bool) bool {
-	if !isStatusCodeCacheable(r.statusCode) {
-		return true
-	}
-
-	cc, err := r.cacheControl()
-	if err != nil {
-		log.Println("Error parsing cache-control: ", err)
-		return true
-	}
-
-	if cc.Has("no-cache") || cc.Has("no-store") || (cc.Has("private") && shared) {
-		return true
-	}
-
-	if maxAge, _ := cc.Get("max-age"); maxAge == "0" {
-		return true
-	}
-
-	if r.header.Get("Authorization") != "" {
-		return true
-	}
-
-	// malformed expires header is uncacheable
-	if _, err = r.Expires(); r.header.Get("Expires") != "" && err != nil {
-		return true
-	}
-
-	return false
 }
 
 func (r *Resource) Warnings() ([]string, error) {
@@ -245,7 +206,7 @@ func (r *Resource) Warnings() ([]string, error) {
 	}
 
 	// http://httpwg.github.io/specs/rfc7234.html#warn.113
-	if !r.HasExplicitFreshness() {
+	if !r.HasExplicitExpiration() {
 		if age > (time.Hour*24) && r.HeuristicFreshness() > (time.Hour*24) {
 			warns = append(warns, `113 - "Heuristic Expiration"`)
 		}

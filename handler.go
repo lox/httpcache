@@ -132,24 +132,67 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *http.Request) {
 
 	h.Logger.Printf("upstream responded in %s", time.Now().Sub(t))
 
-	if res.IsUncacheable(h.Shared) {
+	if !h.isCacheable(r, res) {
 		h.Logger.Printf("resource is uncacheable")
-		rw.Header().Set(CacheHeader, "SKIP")
-		return
-	}
-
-	if res.HasExplicitFreshness() {
-		h.Logger.Printf("resource has explicit freshness")
-	} else if r.Method == "GET" && res.HasValidators() {
-		h.Logger.Printf("resource has validators")
-	} else {
-		h.Logger.Printf("resource has no explicit freshness or validators")
 		rw.Header().Set(CacheHeader, "SKIP")
 		return
 	}
 
 	rw.Header().Set(CacheHeader, "MISS")
 	h.storeResource(r, res)
+}
+
+func isStatusCacheableByDefault(status int) bool {
+	allowed := []int{
+		http.StatusOK,
+		http.StatusFound,
+		http.StatusNotModified,
+		http.StatusNonAuthoritativeInfo,
+		http.StatusMultipleChoices,
+		http.StatusMovedPermanently,
+		http.StatusGone,
+		http.StatusPartialContent,
+	}
+
+	for _, a := range allowed {
+		if a == status {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (h *Handler) isCacheable(r *http.Request, res *Resource) bool {
+	cc, err := res.cacheControl()
+	if err != nil {
+		log.Println("Error parsing cache-control: ", err)
+		return false
+	}
+
+	if cc.Has("no-cache") || cc.Has("no-store") || (cc.Has("private") && h.Shared) {
+		return false
+	}
+
+	if r.Header.Get("Authorization") != "" && h.Shared {
+		return false
+	}
+
+	if res.HasExplicitExpiration() {
+		return true
+	}
+
+	if isStatusCacheableByDefault(res.Status()) {
+		if cc.Has("public") {
+			return true
+		} else if res.HasValidators() {
+			return true
+		} else if res.HeuristicFreshness() > time.Duration(0) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *http.Request) {
@@ -227,18 +270,17 @@ func (h *Handler) validate(r *request, res *Resource) (valid bool) {
 
 // lookupResource finds the best matching Resource for the
 // request, or nil and ErrNotFoundInCache if none is found
-func (h *Handler) lookup(r *request) (*Resource, error) {
-	res, err := h.cache.Retrieve(Key(r.Method, r.URL))
+func (h *Handler) lookup(req *request) (*Resource, error) {
+	res, err := h.cache.Retrieve(Key(req.Method, req.URL))
 
 	// HEAD requests can possibly be served from GET
-	if err == ErrNotFoundInCache && r.Method == "HEAD" {
-		res, err = h.cache.Retrieve(Key("GET", r.URL))
+	if err == ErrNotFoundInCache && req.Method == "HEAD" {
+		res, err = h.cache.Retrieve(Key("GET", req.URL))
 		if err != nil {
 			return nil, err
 		}
 
-		// but only if there is explicit freshness
-		if res.HasExplicitFreshness() && r.isCacheable() {
+		if res.HasExplicitExpiration() && req.isCacheable() {
 			h.Logger.Printf("using cached GET request for serving HEAD")
 			return res, nil
 		} else {
@@ -250,7 +292,7 @@ func (h *Handler) lookup(r *request) (*Resource, error) {
 
 	// Secondary lookup for Vary
 	if vary := res.Header().Get("Vary"); vary != "" {
-		res, err = h.cache.Retrieve(VaryKey(vary, r.Request))
+		res, err = h.cache.Retrieve(VaryKey(vary, req.Request))
 		if err != nil {
 			return res, err
 		}
@@ -284,7 +326,7 @@ func (r *request) isCacheable() bool {
 
 	maxAge, _ := cc.Get("max-age")
 
-	if cc.Has("no-cache") || maxAge == "0" {
+	if cc.Has("no-store") || cc.Has("no-cache") || maxAge == "0" {
 		return false
 	}
 

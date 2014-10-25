@@ -116,12 +116,14 @@ func TestSpecHeuristicCaching(t *testing.T) {
 	assert.Equal(t, 1, upstream.requests, "The second request shouldn't validate")
 }
 
-func TestSpecNoCachingByDefault(t *testing.T) {
+func TestSpecNotCachedWithoutValidatorOrExpiration(t *testing.T) {
 	client, upstream := testSetup()
 	upstream.LastModified = time.Time{}
 	upstream.Etag = ""
 
 	assert.Equal(t, "SKIP", client.get("/").cacheStatus)
+	assert.Equal(t, "SKIP", client.get("/").cacheStatus)
+	assert.Equal(t, 2, upstream.requests)
 }
 
 func TestSpecNoCachingForInvalidExpires(t *testing.T) {
@@ -264,8 +266,7 @@ func TestSpecHeadCanBeServedFromCacheOnlyWithExplicitFreshness(t *testing.T) {
 	assert.Equal(t, "HIT", client.head("/explicit").cacheStatus)
 
 	upstream.CacheControl = ""
-	upstream.LastModified = upstream.Now.AddDate(-1, 0, 0)
-	assert.Equal(t, "MISS", client.get("/implicit").cacheStatus)
+	assert.Equal(t, "SKIP", client.get("/implicit").cacheStatus)
 	assert.Equal(t, "SKIP", client.head("/implicit").cacheStatus)
 	assert.Equal(t, "SKIP", client.head("/implicit").cacheStatus)
 }
