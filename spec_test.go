@@ -270,3 +270,30 @@ func TestSpecHeadCanBeServedFromCacheOnlyWithExplicitFreshness(t *testing.T) {
 	assert.Equal(t, "SKIP", client.head("/implicit").cacheStatus)
 	assert.Equal(t, "SKIP", client.head("/implicit").cacheStatus)
 }
+
+func TestSpecInvalidatingGetWithHeadRequest(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=3600"
+	assert.Equal(t, "MISS", client.get("/explicit").cacheStatus)
+
+	upstream.Body = []byte("brand new content")
+	assert.Equal(t, "SKIP", client.head("/explicit", "Cache-Control: max-age=0").cacheStatus)
+	assert.Equal(t, "MISS", client.get("/explicit").cacheStatus)
+}
+
+func TestSpecFresheningGetWithHeadRequest(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=3600"
+	assert.Equal(t, "MISS", client.get("/explicit").cacheStatus)
+
+	upstream.timeTravel(time.Second * 10)
+	assert.Equal(t, 10*time.Second, client.get("/explicit").age)
+
+	upstream.Header.Add("X-Llamas", "llamas")
+	assert.Equal(t, "SKIP", client.head("/explicit", "Cache-Control: max-age=0").cacheStatus)
+
+	refreshed := client.get("/explicit")
+	assert.Equal(t, "HIT", refreshed.cacheStatus)
+	assert.Equal(t, 0, refreshed.age)
+	assert.Equal(t, "llamas", refreshed.header.Get("X-Llamas"))
+}

@@ -69,6 +69,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			return
 		} else {
 			h.Logger.Printf("response is valid")
+			h.cache.Freshen(res, RequestKey(r))
 		}
 	}
 
@@ -82,6 +83,10 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) needsValidation(res *Resource, req *request) bool {
 	if req.mustValidate() || res.MustValidate() {
+		return true
+	}
+
+	if res.IsStale() {
 		return true
 	}
 
@@ -117,8 +122,15 @@ func (h *Handler) needsValidation(res *Resource, req *request) bool {
 
 // pipeUpstream makes the request via the upstream handler, the response is not stored or modified
 func (h *Handler) pipeUpstream(w http.ResponseWriter, r *http.Request) {
+	rw := newResponseWriter(w)
+
 	h.Logger.Printf("piping request upstream")
-	h.upstream.ServeHTTP(w, r)
+	h.upstream.ServeHTTP(rw, r)
+
+	if r.Method == "HEAD" {
+		res := rw.Resource()
+		h.cache.Freshen(res, Key("GET", r.URL))
+	}
 }
 
 // passUpstream makes the request via the upstream handler and stores the result
@@ -254,12 +266,16 @@ func (h *Handler) validate(r *request, res *Resource) (valid bool) {
 	h.upstream.ServeHTTP(resp, req)
 	resp.Flush()
 
-	checkHeaders := []string{"ETag", "Content-MD5", "Last-Modified", "Content-Length"}
+	return validateHeaders(resHeaders, resp.HeaderMap)
+}
 
-	for _, header := range checkHeaders {
-		if value := resp.HeaderMap.Get(header); value != "" {
-			if resHeaders.Get(header) != value {
-				h.Logger.Printf("%s changed, %q != %q", header, value, resHeaders.Get(header))
+var validationHeaders = []string{"ETag", "Content-MD5", "Last-Modified", "Content-Length"}
+
+func validateHeaders(h1, h2 http.Header) bool {
+	for _, header := range validationHeaders {
+		if value := h2.Get(header); value != "" {
+			if h1.Get(header) != value {
+				log.Printf("%s changed, %q != %q", header, value, h1.Get(header))
 				return false
 			}
 		}
@@ -299,14 +315,6 @@ func (h *Handler) lookup(req *request) (*Resource, error) {
 	}
 
 	return res, nil
-}
-
-func (h *Handler) invalidate(r *http.Request) {
-	Writes.Add(1)
-	go func() {
-		defer Writes.Done()
-		h.cache.Purge(Key("HEAD", r.URL), Key("GET", r.URL))
-	}()
 }
 
 type request struct {

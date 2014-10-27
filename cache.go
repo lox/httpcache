@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/textproto"
 	"os"
 	pathutil "path"
+	"time"
 
 	vfs "gopkgs.com/vfs.v1"
 )
@@ -26,17 +28,18 @@ var ErrNotFoundInCache = errors.New("Not found in cache")
 
 // Cache provides a storage mechanism for cached Resources
 type Cache struct {
-	fs vfs.VFS
+	fs    vfs.VFS
+	stale map[string]time.Time
 }
 
 // NewCache returns a Cache backed off the provided VFS
 func NewCache(fs vfs.VFS) *Cache {
-	return &Cache{fs}
+	return &Cache{fs: fs, stale: map[string]time.Time{}}
 }
 
 // NewMemoryCache returns an ephemeral cache in memory
 func NewMemoryCache() *Cache {
-	return &Cache{vfs.Memory()}
+	return NewCache(vfs.Memory())
 }
 
 // NewDiskCache returns a disk-backed cache
@@ -49,7 +52,7 @@ func NewDiskCache(dir string) (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Cache{chfs}, nil
+	return NewCache(chfs), nil
 }
 
 func (c *Cache) vfsWrite(path string, r io.Reader) error {
@@ -87,18 +90,36 @@ func (c *Cache) Store(res *Resource, keys ...string) error {
 	if err != nil {
 		return err
 	}
-	h := &bytes.Buffer{}
-	writeHeaders(res.Header(), h)
 
 	for _, key := range keys {
-		if err := c.vfsWrite(bodyPrefix+hashKey(key), bytes.NewReader(b)); err != nil {
+		delete(c.stale, key)
+
+		if err := c.storeBody(bytes.NewReader(b), key); err != nil {
 			return err
 		}
-		if err := c.vfsWrite(headerPrefix+hashKey(key), bytes.NewReader(h.Bytes())); err != nil {
+
+		if err := c.storeHeaders(res.Header(), key); err != nil {
 			return err
 		}
 	}
 
+	return nil
+}
+
+func (c *Cache) storeBody(r io.Reader, key string) error {
+	if err := c.vfsWrite(bodyPrefix+hashKey(key), r); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Cache) storeHeaders(h http.Header, key string) error {
+	hb := &bytes.Buffer{}
+	writeHeaders(h, hb)
+
+	if err := c.vfsWrite(headerPrefix+hashKey(key), bytes.NewReader(hb.Bytes())); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -118,12 +139,38 @@ func (c *Cache) Retrieve(key string) (*Resource, error) {
 		}
 		return nil, err
 	}
-	return NewResource(http.StatusOK, f, h), nil
+	res := NewResource(http.StatusOK, f, h)
+	if staleTime, exists := c.stale[key]; exists {
+		if !res.DateAfter(staleTime) {
+			log.Printf("stale marker of %s found", staleTime)
+			res.MarkStale()
+		}
+	}
+	return res, nil
 }
 
-// Purge removes the Resources identified by the provided keys from the cache
-func (c *Cache) Purge(keys ...string) (int, error) {
-	return 0, errors.New("Purge not implemented yet")
+func (c *Cache) Invalidate(keys ...string) {
+	log.Printf("invalidating %q", keys)
+	for _, key := range keys {
+		c.stale[key] = Clock()
+	}
+}
+
+func (c *Cache) Freshen(res *Resource, keys ...string) error {
+	for _, key := range keys {
+		if h, err := c.Header(key); err == nil {
+			if validateHeaders(h, res.Header()) {
+				log.Printf("freshened %s", key)
+				if err := c.storeHeaders(res.Header(), key); err != nil {
+					return err
+				}
+			} else {
+				log.Printf("freshen failed, invalidating %s", key)
+				c.Invalidate(key)
+			}
+		}
+	}
+	return nil
 }
 
 func hashKey(key string) string {

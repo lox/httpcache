@@ -35,6 +35,7 @@ type Resource struct {
 	header     http.Header
 	statusCode int
 	cc         CacheControl
+	stale      bool
 }
 
 func NewResource(statusCode int, body ReadSeekCloser, hdrs http.Header) *Resource {
@@ -59,6 +60,14 @@ func (r *Resource) Status() int {
 
 func (r *Resource) Header() http.Header {
 	return r.header
+}
+
+func (r *Resource) IsStale() bool {
+	return r.stale
+}
+
+func (r *Resource) MarkStale() {
+	r.stale = true
 }
 
 func (r *Resource) cacheControl() (CacheControl, error) {
@@ -104,6 +113,17 @@ func (r *Resource) MustValidate() bool {
 		return true
 	}
 
+	return false
+}
+
+func (r *Resource) DateAfter(d time.Time) bool {
+	if dateHeader := r.header.Get("Date"); dateHeader != "" {
+		if t, err := http.ParseTime(dateHeader); err != nil {
+			return false
+		} else {
+			return t.After(d)
+		}
+	}
 	return false
 }
 
