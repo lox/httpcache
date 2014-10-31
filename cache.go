@@ -44,6 +44,9 @@ func NewMemoryCache() *Cache {
 
 // NewDiskCache returns a disk-backed cache
 func NewDiskCache(dir string) (*Cache, error) {
+	if err := os.MkdirAll(dir, 0777); err != nil {
+		return nil, err
+	}
 	fs, err := vfs.FS(dir)
 	if err != nil {
 		return nil, err
