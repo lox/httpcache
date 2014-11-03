@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lox/httpcache"
+	"github.com/lox/httpcache/httplog"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -32,11 +33,9 @@ func testSetup() (*client, *upstreamServer) {
 	var handler http.Handler = hc
 
 	if testing.Verbose() {
-		handler = &httpcache.Logger{
-			Handler: hc,
-		}
+		handler = httplog.NewResponseLogger(hc)
 	} else {
-		hc.Logger = log.New(ioutil.Discard, "", log.LstdFlags)
+		log.SetOutput(ioutil.Discard)
 	}
 
 	return &client{handler}, upstream

@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/lox/httpcache"
+	"github.com/lox/httpcache/httplog"
 )
 
 const (
@@ -16,18 +17,26 @@ const (
 )
 
 var (
-	listen  string
-	useDisk bool
-	private bool
-	dir     string
+	listen   string
+	useDisk  bool
+	private  bool
+	dir      string
+	dumpHttp bool
+	verbose  bool
 )
 
 func init() {
 	flag.StringVar(&listen, "listen", defaultListen, "the host and port to bind to")
 	flag.StringVar(&dir, "dir", defaultDir, "the dir to store cache data in, implies -disk")
 	flag.BoolVar(&useDisk, "disk", false, "whether to store cache data to disk")
+	flag.BoolVar(&verbose, "v", false, "show verbose output and debugging")
 	flag.BoolVar(&private, "private", false, "make the cache private")
+	flag.BoolVar(&dumpHttp, "dumphttp", false, "dumps http requests and responses to stdout")
 	flag.Parse()
+
+	if verbose {
+		httpcache.DebugLogging = true
+	}
 }
 
 func main() {
@@ -55,10 +64,10 @@ func main() {
 	handler := httpcache.NewHandler(cache, proxy)
 	handler.Shared = !private
 
-	logger := &httpcache.Logger{
-		Handler: handler,
-	}
+	respLogger := httplog.NewResponseLogger(handler)
+	respLogger.DumpRequests = dumpHttp
+	respLogger.DumpResponses = dumpHttp
 
 	log.Printf("listening on http://%s", listen)
-	log.Fatal(http.ListenAndServe(listen, logger))
+	log.Fatal(http.ListenAndServe(listen, respLogger))
 }
