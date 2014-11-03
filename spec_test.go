@@ -33,7 +33,10 @@ func testSetup() (*client, *upstreamServer) {
 	var handler http.Handler = hc
 
 	if testing.Verbose() {
-		handler = httplog.NewResponseLogger(hc)
+		rlogger := httplog.NewResponseLogger(hc)
+		rlogger.DumpRequests = true
+		rlogger.DumpResponses = true
+		handler = rlogger
 	} else {
 		log.SetOutput(ioutil.Discard)
 	}

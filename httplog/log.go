@@ -18,9 +18,10 @@ const (
 
 type responseWriter struct {
 	http.ResponseWriter
-	status int
-	size   int
-	t      time.Time
+	status      int
+	size        int
+	t           time.Time
+	errorOutput bytes.Buffer
 }
 
 func (l *responseWriter) Header() http.Header {
@@ -31,8 +32,8 @@ func (l *responseWriter) Write(b []byte) (int, error) {
 	if l.status == 0 {
 		l.status = http.StatusOK
 	}
-	if l.status < 200 || l.status >= 300 {
-		os.Stderr.Write(b)
+	if isError(l.status) {
+		l.errorOutput.Write(b)
 	}
 	size, err := l.ResponseWriter.Write(b)
 	l.size += size
@@ -79,6 +80,10 @@ func (l *ResponseLogger) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writePrefixString(strings.TrimSpace(buf.String()), "<< ", os.Stderr)
 	}
 
+	if l.DumpErrors && isError(respWr.status) {
+		writePrefixString(respWr.errorOutput.String(), "<< ", os.Stderr)
+	}
+
 	l.writeLog(req, respWr)
 }
 
@@ -111,12 +116,16 @@ func (l *ResponseLogger) writeLog(req *http.Request, respWr *responseWriter) {
 	)
 }
 
+func isError(code int) bool {
+	return code >= 500
+}
+
 func writePrefixString(s, prefix string, w io.Writer) {
-	w.Write([]byte("\n"))
+	os.Stderr.Write([]byte("\n"))
 	for _, line := range strings.Split(s, "\r\n") {
 		w.Write([]byte(prefix))
 		w.Write([]byte(line))
 		w.Write([]byte("\n"))
 	}
-	w.Write([]byte("\n"))
+	os.Stderr.Write([]byte("\n"))
 }

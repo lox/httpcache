@@ -67,6 +67,7 @@ func main() {
 	respLogger := httplog.NewResponseLogger(handler)
 	respLogger.DumpRequests = dumpHttp
 	respLogger.DumpResponses = dumpHttp
+	respLogger.DumpErrors = dumpHttp
 
 	log.Printf("listening on http://%s", listen)
 	log.Fatal(http.ListenAndServe(listen, respLogger))
