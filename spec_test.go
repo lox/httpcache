@@ -37,6 +37,7 @@ func testSetup() (*client, *upstreamServer) {
 		rlogger.DumpRequests = true
 		rlogger.DumpResponses = true
 		handler = rlogger
+		httpcache.DebugLogging = true
 	} else {
 		log.SetOutput(ioutil.Discard)
 	}
@@ -298,4 +299,17 @@ func TestSpecFresheningGetWithHeadRequest(t *testing.T) {
 	assert.Equal(t, "HIT", refreshed.cacheStatus)
 	assert.Equal(t, 0, refreshed.age)
 	assert.Equal(t, "llamas", refreshed.header.Get("X-Llamas"))
+}
+
+func TestSpecContentHeaderInRequestRespected(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=3600"
+
+	r1 := client.get("/llamas/rock")
+	assert.Equal(t, "MISS", r1.cacheStatus)
+	assert.Equal(t, string(upstream.Body), string(r1.body))
+
+	r2 := client.get("/another/llamas", "Content-Location: /llamas/rock")
+	assert.Equal(t, "HIT", r2.cacheStatus)
+	assert.Equal(t, string(upstream.Body), string(r2.body))
 }

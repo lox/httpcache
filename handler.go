@@ -70,7 +70,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			return
 		} else {
 			Debugf("response is valid")
-			h.cache.Freshen(res, RequestKey(r))
+			h.cache.Freshen(res, NewRequestKey(r).String())
 		}
 	}
 
@@ -130,7 +130,7 @@ func (h *Handler) pipeUpstream(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "HEAD" {
 		res := rw.Resource()
-		h.cache.Freshen(res, Key("GET", r.URL))
+		h.cache.Freshen(res, NewRequestKey(r).ForMethod("GET").String())
 	}
 }
 
@@ -237,12 +237,12 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 	go func() {
 		defer Writes.Done()
 		t := time.Now()
-		keys := []string{RequestKey(r)}
+		keys := []string{NewRequestKey(r).String()}
 		headers := res.Header()
 
 		// store a secondary vary version
 		if vary := headers.Get("Vary"); vary != "" {
-			keys = append(keys, VaryKey(headers.Get("Vary"), r))
+			keys = append(keys, NewRequestKey(r).Vary(vary, r).String())
 		}
 
 		if err := h.cache.Store(res, keys...); err != nil {
@@ -288,11 +288,12 @@ func validateHeaders(h1, h2 http.Header) bool {
 // lookupResource finds the best matching Resource for the
 // request, or nil and ErrNotFoundInCache if none is found
 func (h *Handler) lookup(req *request) (*Resource, error) {
-	res, err := h.cache.Retrieve(Key(req.Method, req.URL))
+	key := req.key()
+	res, err := h.cache.Retrieve(key.String())
 
 	// HEAD requests can possibly be served from GET
 	if err == ErrNotFoundInCache && req.Method == "HEAD" {
-		res, err = h.cache.Retrieve(Key("GET", req.URL))
+		res, err = h.cache.Retrieve(key.ForMethod("GET").String())
 		if err != nil {
 			return nil, err
 		}
@@ -309,7 +310,7 @@ func (h *Handler) lookup(req *request) (*Resource, error) {
 
 	// Secondary lookup for Vary
 	if vary := res.Header().Get("Vary"); vary != "" {
-		res, err = h.cache.Retrieve(VaryKey(vary, req.Request))
+		res, err = h.cache.Retrieve(key.Vary(vary, req.Request).String())
 		if err != nil {
 			return res, err
 		}
@@ -403,6 +404,10 @@ func (r *request) cloneRequest() *http.Request {
 		r2.Header[k] = s
 	}
 	return r2
+}
+
+func (r *request) key() Key {
+	return NewRequestKey(r.Request)
 }
 
 func newResponseWriter(w http.ResponseWriter) *responseWriter {
