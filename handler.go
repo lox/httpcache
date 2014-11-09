@@ -195,7 +195,8 @@ func (h *Handler) isCacheable(r *http.Request, res *Resource) bool {
 		return true
 	}
 
-	if isStatusCacheableByDefault(res.Status()) {
+	// if isStatusCacheableByDefault(res.Status()) {
+	if res.Status() == http.StatusOK {
 		if cc.Has("public") {
 			return true
 		} else if res.HasValidators() {
