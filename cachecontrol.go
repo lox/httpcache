@@ -3,6 +3,7 @@ package httpcache
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -87,8 +88,15 @@ func (cc CacheControl) Duration(key string) (time.Duration, error) {
 }
 
 func (cc CacheControl) String() string {
+	keys := make([]string, len(cc))
+	for k, _ := range cc {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 	buf := bytes.Buffer{}
-	for k, vals := range cc {
+
+	for _, k := range keys {
+		vals := cc[k]
 		if len(vals) == 0 {
 			buf.WriteString(k + ", ")
 		}
@@ -102,24 +110,4 @@ func (cc CacheControl) String() string {
 	}
 
 	return strings.TrimSuffix(buf.String(), ", ")
-}
-
-func (cc CacheControl) Equals(cc2 CacheControl) bool {
-	if len(cc) != len(cc2) {
-		return false
-	}
-
-	for k, vals := range cc {
-		vals2 := cc2[k]
-		if len(vals2) != len(vals) {
-			return false
-		}
-		for i, val := range vals {
-			if val != vals2[i] {
-				return false
-			}
-		}
-	}
-
-	return true
 }

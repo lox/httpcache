@@ -38,7 +38,6 @@ func TestParsingCacheControl(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		require.True(t, cc1.Equals(expect.ccStruct))
 		require.NotEmpty(t, cc1.String())
 
 		cc2, err := ParseCacheControl(cc1.String())
@@ -46,6 +45,6 @@ func TestParsingCacheControl(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		require.True(t, cc1.Equals(cc2))
+		require.Equal(t, cc1.String(), cc2.String())
 	}
 }
