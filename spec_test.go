@@ -331,3 +331,12 @@ func TestSpecContentHeaderInRequestRespected(t *testing.T) {
 	assert.Equal(t, "HIT", r2.cacheStatus)
 	assert.Equal(t, string(upstream.Body), string(r2.body))
 }
+
+func TestSpecMultipleCacheControlHeaders(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.Header.Add("Cache-Control", "max-age=60, max-stale=10")
+	upstream.Header.Add("Cache-Control", "no-cache")
+
+	r1 := client.get("/")
+	assert.Equal(t, "SKIP", r1.cacheStatus)
+}

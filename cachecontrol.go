@@ -3,6 +3,7 @@ package httpcache
 import (
 	"bytes"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +14,10 @@ const (
 )
 
 type CacheControl map[string][]string
+
+func ParseCacheControlHeaders(h http.Header) (CacheControl, error) {
+	return ParseCacheControl(strings.Join(h["Cache-Control"], ", "))
+}
 
 func ParseCacheControl(input string) (CacheControl, error) {
 	cc := make(CacheControl)

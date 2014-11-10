@@ -74,7 +74,8 @@ func (r *Resource) cacheControl() (CacheControl, error) {
 	if r.cc != nil {
 		return r.cc, nil
 	}
-	cc, err := ParseCacheControl(r.header.Get("Cache-Control"))
+
+	cc, err := ParseCacheControlHeaders(r.header)
 	if err != nil {
 		return cc, err
 	}
