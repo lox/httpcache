@@ -84,6 +84,24 @@ func TestSpecBasicCaching(t *testing.T) {
 	assert.Equal(t, time.Second*10, r2.age)
 }
 
+func TestSpecCachingStatusCodes(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.StatusCode = http.StatusNotFound
+	upstream.CacheControl = "max-age=60"
+
+	r1 := client.get("/")
+	assert.Equal(t, http.StatusNotFound, r1.statusCode)
+	assert.Equal(t, "MISS", r1.cacheStatus)
+	assert.Equal(t, string(upstream.Body), string(r1.body))
+
+	upstream.timeTravel(time.Second * 10)
+	r2 := client.get("/")
+	assert.Equal(t, http.StatusNotFound, r2.statusCode)
+	assert.Equal(t, "HIT", r2.cacheStatus)
+	assert.Equal(t, string(upstream.Body), string(r2.body))
+	assert.Equal(t, time.Second*10, r2.age)
+}
+
 func TestSpecConditionalCaching(t *testing.T) {
 	client, upstream := testSetup()
 	upstream.Etag = `"llamas"`

@@ -3,6 +3,7 @@ package httpcache
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -229,7 +230,14 @@ func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *http.
 	}
 
 	w.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
-	http.ServeContent(w, req, "", res.LastModified(), res)
+
+	// hacky handler for non-ok statuses
+	if res.Status() != http.StatusOK {
+		w.WriteHeader(res.Status())
+		io.Copy(w, res)
+	} else {
+		http.ServeContent(w, req, "", res.LastModified(), res)
+	}
 }
 
 func (h *Handler) storeResource(r *http.Request, res *Resource) {
