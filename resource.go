@@ -108,13 +108,13 @@ func (r *Resource) Expires() (time.Time, error) {
 	return time.Time{}, nil
 }
 
-func (r *Resource) MustValidate() bool {
+func (r *Resource) MustValidate(shared bool) bool {
 	cc, err := r.cacheControl()
 	if err != nil {
 		log.Printf("Error parsing Cache-Control: ", err.Error())
 	}
 
-	if cc.Has("must-validate") {
+	if cc.Has("must-revalidate") || cc.Has("proxy-revalidate") && shared {
 		return true
 	}
 

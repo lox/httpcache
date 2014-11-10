@@ -84,7 +84,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) needsValidation(res *Resource, req *request) bool {
-	if req.mustValidate() || res.MustValidate() {
+	if req.mustValidate() || res.MustValidate(h.Shared) {
 		return true
 	}
 
