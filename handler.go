@@ -209,6 +209,26 @@ func isStatusCacheableByDefault(status int) bool {
 	return false
 }
 
+func isStatusStoreable(status int) bool {
+	allowed := []int{
+		http.StatusOK,
+		http.StatusFound,
+		http.StatusNonAuthoritativeInfo,
+		http.StatusMultipleChoices,
+		http.StatusMovedPermanently,
+		http.StatusGone,
+		http.StatusNotFound,
+	}
+
+	for _, a := range allowed {
+		if a == status {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (h *Handler) isCacheable(r *http.Request, res *Resource) bool {
 	cc, err := res.cacheControl()
 	if err != nil {
@@ -217,6 +237,10 @@ func (h *Handler) isCacheable(r *http.Request, res *Resource) bool {
 	}
 
 	if cc.Has("no-cache") || cc.Has("no-store") || (cc.Has("private") && h.Shared) {
+		return false
+	}
+
+	if !isStatusStoreable(res.Status()) {
 		return false
 	}
 
