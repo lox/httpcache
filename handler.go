@@ -229,6 +229,7 @@ func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *http.
 	}
 
 	w.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
+	w.Header().Set("Via", res.Via())
 
 	// hacky handler for non-ok statuses
 	if res.Status() != http.StatusOK {

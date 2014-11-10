@@ -3,15 +3,18 @@ package httpcache
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const (
 	lastModDivisor = 10
+	viaPseudonym   = "httpcache"
 )
 
 var Clock = func() time.Time {
@@ -234,4 +237,10 @@ func (r *Resource) Warnings() ([]string, error) {
 	}
 
 	return warns, nil
+}
+
+func (r *Resource) Via() string {
+	via := []string{}
+	via = append(via, fmt.Sprintf("1.1 %s", viaPseudonym))
+	return strings.Join(via, ",")
 }
