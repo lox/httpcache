@@ -26,11 +26,6 @@ log.Fatal(http.ListenAndServe(listen, proxy))
 
 ## Todo
 
-- Better range support (with caching of partial content)
-- Stale support w/ warnings
-- Corrected Age calculations
-- Freshening stored responses
-- Store/No-store support
 - Offline operation
 - Handle key-based private headers
 

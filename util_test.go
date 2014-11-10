@@ -106,16 +106,17 @@ type clientResponse struct {
 }
 
 type upstreamServer struct {
-	Now          time.Time
-	Body         []byte
-	Filename     string
-	CacheControl string
-	Etag, Vary   string
-	LastModified time.Time
-	StatusCode   int
-	Header       http.Header
-	asserts      []func(r *http.Request)
-	requests     int
+	Now              time.Time
+	Body             []byte
+	Filename         string
+	CacheControl     string
+	Etag, Vary       string
+	LastModified     time.Time
+	ResponseDuration time.Duration
+	StatusCode       int
+	Header           http.Header
+	asserts          []func(r *http.Request)
+	requests         int
 }
 
 func (u *upstreamServer) timeTravel(d time.Duration) {
@@ -156,6 +157,8 @@ func (u *upstreamServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
+
+	u.timeTravel(u.ResponseDuration)
 
 	if u.StatusCode != 0 && u.StatusCode != 200 {
 		rw.WriteHeader(u.StatusCode)

@@ -265,18 +265,26 @@ func TestSpecAgeHeaderFromUpstream(t *testing.T) {
 	assert.Equal(t, time.Hour*3, client.get("/").age)
 }
 
-// http://coad.measurement-factory.com/cgi-bin/coad/GraseInfoCgi?session_id=54449bc3_14267_a9f27f49&info_id=test_clause/rfc2616/ageWarn
+func TestSpecAgeHeaderIsCorrected(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=86400"
+	upstream.Header.Set("Age", "3600") //1hr
+	upstream.ResponseDuration = time.Minute * 2
+	assert.Equal(t, time.Hour+(time.Minute*2), client.get("/").age)
+
+	upstream.timeTravel(time.Minute * 10)
+	assert.Equal(t, time.Hour+(time.Minute*14), client.get("/").age)
+}
+
 func TestSpecWarningForOldContent(t *testing.T) {
 	client, upstream := testSetup()
 	upstream.LastModified = upstream.Now.AddDate(-1, 0, 0)
 	assert.Equal(t, "MISS", client.get("/").cacheStatus)
-	modTime := upstream.Now.Format(http.TimeFormat)
 
 	upstream.timeTravel(time.Hour * 48)
-	r2 := client.get("/", "If-Modified-Since: "+modTime)
+	r2 := client.get("/")
 	assert.Equal(t, "HIT", r2.cacheStatus)
 	assert.Equal(t, []string{"113 - \"Heuristic Expiration\""}, r2.Header()["Warning"])
-	assert.Equal(t, 2, upstream.requests, "The second request should validate")
 }
 
 func TestSpecHeadCanBeServedFromCacheOnlyWithExplicitFreshness(t *testing.T) {

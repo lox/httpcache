@@ -32,7 +32,7 @@ func NewHandler(cache *Cache, upstream http.Handler) *Handler {
 }
 
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
-	req := &request{Request: r}
+	req := &request{Request: r, t: Clock()}
 
 	if bad, reason := req.isBadRequest(); bad {
 		http.Error(rw, "invalid request: "+reason,
@@ -139,12 +139,15 @@ func (h *Handler) pipeUpstream(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) passUpstream(w http.ResponseWriter, r *http.Request) {
 	rw := newResponseWriter(w)
 
-	t := time.Now()
+	t := Clock()
 	Debugf("passing request upstream")
 	h.upstream.ServeHTTP(rw, r)
 	res := rw.Resource()
+	Debugf("upstream responded in %s", Clock().Sub(t).String())
 
-	Debugf("upstream responded in %s", time.Now().Sub(t))
+	if age, err := correctedAge(res.Header(), t, Clock()); err == nil {
+		res.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
+	}
 
 	if !h.isCacheable(r, res) {
 		Debugf("resource is uncacheable")
@@ -154,6 +157,35 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *http.Request) {
 
 	rw.Header().Set(CacheHeader, "MISS")
 	h.storeResource(r, res)
+}
+
+// correctedAge adjusts the age of a resource for clock skeq and travel time
+// https://httpwg.github.io/specs/rfc7234.html#rfc.section.4.2.3
+func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, error) {
+	date, err := timeHeader("Date", h)
+	if err != nil {
+		return time.Duration(0), err
+	}
+
+	apparentAge := respTime.Sub(date)
+	if apparentAge < 0 {
+		apparentAge = 0
+	}
+
+	respDelay := respTime.Sub(reqTime)
+	ageSeconds, err := intHeader("Age", h)
+	if err != nil {
+		return time.Duration(0), err
+	}
+
+	age := time.Second * time.Duration(ageSeconds)
+	correctedAge := age + respDelay
+
+	if correctedAge > apparentAge {
+		return correctedAge, nil
+	}
+
+	return apparentAge, nil
 }
 
 func isStatusCacheableByDefault(status int) bool {
@@ -245,7 +277,7 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 
 	go func() {
 		defer Writes.Done()
-		t := time.Now()
+		t := Clock()
 		keys := []string{NewRequestKey(r).String()}
 		headers := res.Header()
 
@@ -258,11 +290,11 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 			Errorf("storing resource %#v failed: %s", err.Error(), keys)
 		}
 
-		Debugf("stored resources %+v in %s", keys, time.Now().Sub(t))
+		Debugf("stored resources %+v in %s", keys, Clock().Sub(t))
 	}()
 }
 
-func (h *Handler) validate(r *request, res *Resource) (valid bool) {
+func (h *Handler) validate(r *request, res *Resource) bool {
 	req := r.cloneRequest()
 	resHeaders := res.Header()
 
@@ -272,11 +304,21 @@ func (h *Handler) validate(r *request, res *Resource) (valid bool) {
 		req.Header.Set("If-Modified-Since", lastMod)
 	}
 
+	t := Clock()
 	resp := httptest.NewRecorder()
 	h.upstream.ServeHTTP(resp, req)
 	resp.Flush()
 
-	return validateHeaders(resHeaders, resp.HeaderMap)
+	if age, err := correctedAge(resp.HeaderMap, t, Clock()); err == nil {
+		resp.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
+	}
+
+	valid := validateHeaders(resHeaders, resp.HeaderMap)
+	if valid {
+		res.header = resp.HeaderMap
+	}
+
+	return valid
 }
 
 var validationHeaders = []string{"ETag", "Content-MD5", "Last-Modified", "Content-Length"}
@@ -331,6 +373,7 @@ func (h *Handler) lookup(req *request) (*Resource, error) {
 type request struct {
 	*http.Request
 	cc CacheControl
+	t  time.Time
 }
 
 func (r *request) isCacheable() bool {

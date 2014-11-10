@@ -35,10 +35,11 @@ func (brsc *byteReadSeekCloser) Close() error { return nil }
 
 type Resource struct {
 	ReadSeekCloser
-	header     http.Header
-	statusCode int
-	cc         CacheControl
-	stale      bool
+	RequestTime, ResponseTime time.Time
+	header                    http.Header
+	statusCode                int
+	cc                        CacheControl
+	stale                     bool
 }
 
 func NewResource(statusCode int, body ReadSeekCloser, hdrs http.Header) *Resource {
@@ -131,6 +132,7 @@ func (r *Resource) DateAfter(d time.Time) bool {
 	return false
 }
 
+// Calculate the age of the resource
 func (r *Resource) Age() (time.Duration, error) {
 	var age time.Duration
 
