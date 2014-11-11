@@ -137,6 +137,19 @@ func TestSpecHeuristicCaching(t *testing.T) {
 	assert.Equal(t, 1, upstream.requests, "The second request shouldn't validate")
 }
 
+func TestSpecCacheControlTrumpsExpires(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.LastModified = upstream.Now.AddDate(-1, 0, 0)
+	upstream.CacheControl = "max-age=2"
+	assert.Equal(t, "MISS", client.get("/").cacheStatus)
+	assert.Equal(t, "HIT", client.get("/").cacheStatus)
+	assert.Equal(t, 1, upstream.requests)
+
+	upstream.timeTravel(time.Hour * 48)
+	assert.Equal(t, "HIT", client.get("/").cacheStatus)
+	assert.Equal(t, 2, upstream.requests)
+}
+
 func TestSpecNotCachedWithoutValidatorOrExpiration(t *testing.T) {
 	client, upstream := testSetup()
 	upstream.LastModified = time.Time{}

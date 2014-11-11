@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -110,7 +109,8 @@ func (r *Resource) Expires() (time.Time, error) {
 func (r *Resource) MustValidate(shared bool) bool {
 	cc, err := r.cacheControl()
 	if err != nil {
-		log.Printf("Error parsing Cache-Control: ", err.Error())
+		Debugf("Error parsing Cache-Control: ", err.Error())
+		return true
 	}
 
 	if cc.Has("must-revalidate") || cc.Has("proxy-revalidate") && shared {
@@ -194,6 +194,7 @@ func (r *Resource) HasValidators() bool {
 func (r *Resource) HasExplicitExpiration() bool {
 	cc, err := r.cacheControl()
 	if err != nil {
+		Debugf("Error parsing Cache-Control: %s", err.Error())
 		return false
 	}
 
@@ -213,7 +214,7 @@ func (r *Resource) HasExplicitExpiration() bool {
 }
 
 func (r *Resource) HeuristicFreshness() time.Duration {
-	if r.header.Get("Last-Modified") != "" {
+	if !r.HasExplicitExpiration() && r.header.Get("Last-Modified") != "" {
 		return Clock().Sub(r.LastModified()) / time.Duration(lastModDivisor)
 	}
 
