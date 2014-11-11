@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	CacheHeader = "X-Cache"
+	CacheHeader     = "X-Cache"
+	ProxyDateHeader = "Proxy-Date"
 )
 
 var Writes sync.WaitGroup
@@ -156,6 +157,7 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rw.Header().Set(CacheHeader, "MISS")
+	rw.Header().Set(ProxyDateHeader, Clock().Format(http.TimeFormat))
 	h.storeResource(r, res)
 }
 
@@ -340,6 +342,7 @@ func (h *Handler) validate(r *request, res *Resource) bool {
 	valid := validateHeaders(resHeaders, resp.HeaderMap)
 	if valid {
 		res.header = resp.HeaderMap
+		res.header.Set(ProxyDateHeader, Clock().Format(http.TimeFormat))
 	}
 
 	return valid

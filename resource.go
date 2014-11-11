@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -136,18 +135,16 @@ func (r *Resource) DateAfter(d time.Time) bool {
 func (r *Resource) Age() (time.Duration, error) {
 	var age time.Duration
 
-	if ageHeader := r.header.Get("Age"); ageHeader != "" {
-		if ageInt, err := strconv.Atoi(ageHeader); err == nil {
-			age = time.Second * time.Duration(ageInt)
-		}
+	if ageInt, err := intHeader("Age", r.header); err == nil {
+		age = time.Second * time.Duration(ageInt)
 	}
 
-	if dateHeader := r.header.Get("Date"); dateHeader != "" {
-		if t, err := http.ParseTime(dateHeader); err != nil {
-			return time.Duration(0), err
-		} else {
-			return Clock().Sub(t) + age, nil
-		}
+	if proxyDate, err := timeHeader(ProxyDateHeader, r.header); err == nil {
+		return Clock().Sub(proxyDate) + age, nil
+	}
+
+	if date, err := timeHeader("Date", r.header); err == nil {
+		return Clock().Sub(date) + age, nil
 	}
 
 	return time.Duration(0), errors.New("Unable to calculate age")

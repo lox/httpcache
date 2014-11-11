@@ -269,11 +269,12 @@ func TestSpecAgeHeaderIsCorrected(t *testing.T) {
 	client, upstream := testSetup()
 	upstream.CacheControl = "max-age=86400"
 	upstream.Header.Set("Age", "3600") //1hr
-	upstream.ResponseDuration = time.Minute * 2
-	assert.Equal(t, time.Hour+(time.Minute*2), client.get("/").age)
+	upstream.ResponseDuration = time.Second * 2
+	assert.Equal(t, time.Second*3602, client.get("/").age)
 
-	upstream.timeTravel(time.Minute * 10)
-	assert.Equal(t, time.Hour+(time.Minute*14), client.get("/").age)
+	upstream.timeTravel(time.Second * 60)
+	assert.Equal(t, time.Second*3662, client.get("/").age)
+	assert.Equal(t, 1, upstream.requests)
 }
 
 func TestSpecWarningForOldContent(t *testing.T) {
