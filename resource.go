@@ -17,7 +17,7 @@ const (
 )
 
 var Clock = func() time.Time {
-	return time.Now()
+	return time.Now().UTC()
 }
 
 type ReadSeekCloser interface {
