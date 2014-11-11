@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -147,7 +149,9 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *http.Request) {
 	Debugf("upstream responded in %s", Clock().Sub(t).String())
 
 	if age, err := correctedAge(res.Header(), t, Clock()); err == nil {
-		res.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
+		res.Header().Set("Age", strconv.Itoa(int(math.Ceil(age.Seconds()))))
+	} else {
+		Debugf("error calculating corrected age: %s", err.Error())
 	}
 
 	if !h.isCacheable(r, res) {
@@ -173,21 +177,19 @@ func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, er
 	if apparentAge < 0 {
 		apparentAge = 0
 	}
-
 	respDelay := respTime.Sub(reqTime)
 	ageSeconds, err := intHeader("Age", h)
-	if err != nil {
-		return time.Duration(0), err
-	}
-
 	age := time.Second * time.Duration(ageSeconds)
 	correctedAge := age + respDelay
 
-	if correctedAge > apparentAge {
-		return correctedAge, nil
+	if apparentAge > correctedAge {
+		correctedAge = apparentAge
 	}
 
-	return apparentAge, nil
+	residentTime := Clock().Sub(respTime)
+	currentAge := correctedAge + residentTime
+
+	return currentAge, nil
 }
 
 func isStatusCacheableByDefault(status int) bool {

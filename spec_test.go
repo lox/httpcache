@@ -278,7 +278,7 @@ func TestSpecAgeHeaderFromUpstream(t *testing.T) {
 	assert.Equal(t, time.Hour*3, client.get("/").age)
 }
 
-func TestSpecAgeHeaderIsCorrected(t *testing.T) {
+func TestSpecAgeHeaderWithResponseDelay(t *testing.T) {
 	client, upstream := testSetup()
 	upstream.CacheControl = "max-age=86400"
 	upstream.Header.Set("Age", "3600") //1hr
@@ -287,6 +287,17 @@ func TestSpecAgeHeaderIsCorrected(t *testing.T) {
 
 	upstream.timeTravel(time.Second * 60)
 	assert.Equal(t, time.Second*3662, client.get("/").age)
+	assert.Equal(t, 1, upstream.requests)
+}
+
+func TestSpecAgeHeaderGeneratedWhereNoneExists(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=86400"
+	upstream.ResponseDuration = time.Second * 2
+	assert.Equal(t, time.Second*2, client.get("/").age)
+
+	upstream.timeTravel(time.Second * 60)
+	assert.Equal(t, time.Second*62, client.get("/").age)
 	assert.Equal(t, 1, upstream.requests)
 }
 
