@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/textproto"
@@ -97,15 +96,20 @@ func (c *Cache) Header(key string) (Header, error) {
 
 // Store a resource against a number of keys
 func (c *Cache) Store(res *Resource, keys ...string) error {
-	b, err := ioutil.ReadAll(res)
-	if err != nil {
+	var buf = &bytes.Buffer{}
+
+	if length, err := strconv.ParseInt(res.Header().Get("Content-Length"), 10, 64); err == nil {
+		if _, err = io.CopyN(buf, res, length); err != nil {
+			return err
+		}
+	} else if _, err = io.Copy(buf, res); err != nil {
 		return err
 	}
 
 	for _, key := range keys {
 		delete(c.stale, key)
 
-		if err := c.storeBody(bytes.NewReader(b), key); err != nil {
+		if err := c.storeBody(buf, key); err != nil {
 			return err
 		}
 
