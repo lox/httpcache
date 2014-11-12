@@ -30,21 +30,18 @@ func TestParsingCacheControl(t *testing.T) {
 		{`max-stale=60`, CacheControl{
 			"max-stale": []string{"60"},
 		}},
+		{`" max-age=8,max-age=8 "=blah`, CacheControl{
+			" max-age=8,max-age=8 ": []string{"blah"},
+		}},
 	}
 
 	for _, expect := range table {
-		cc1, err := ParseCacheControl(expect.ccString)
+		cc, err := ParseCacheControl(expect.ccString)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		require.NotEmpty(t, cc1.String())
-
-		cc2, err := ParseCacheControl(cc1.String())
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		require.Equal(t, cc1.String(), cc2.String())
+		require.Equal(t, cc, expect.ccStruct)
+		require.NotEmpty(t, cc.String())
 	}
 }

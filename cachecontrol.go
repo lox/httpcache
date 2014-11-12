@@ -22,47 +22,46 @@ func ParseCacheControlHeaders(h http.Header) (CacheControl, error) {
 func ParseCacheControl(input string) (CacheControl, error) {
 	cc := make(CacheControl)
 	length := len(input)
+	isValue := false
+	lastKey := ""
 
-	var inToken, inQuote bool
-	var offset int
-
-	// split the string into tokens key=value
-	for i := 0; i < length; i++ {
-		c := input[i]
-
-		if inToken && c == ',' && !inQuote {
-			addToken(cc, input[offset:i])
-			inToken = false
-		} else if inToken && c == '"' && i > 0 && input[i-1] == '=' {
-			inQuote = true
-		} else if !inToken && (c != ',' && c != ' ') {
-			inToken = true
-			offset = i
-		} else if inToken && inQuote && c == '"' {
-			addToken(cc, input[offset:i+1])
-			inToken = false
+	for pos := 0; pos < length; pos++ {
+		var token string
+		switch input[pos] {
+		case '"':
+			token = readString(input, pos+1, "\"")
+			pos += len(token) + 1
+		case ',', '\n', '\r', ' ', '\t':
+			continue
+		case '=':
+			isValue = true
+			continue
+		default:
+			token = readString(input, pos, "\"\n\t\r ,=")
+			pos += len(token) - 1
 		}
-	}
-
-	// process leftovers
-	if offset < length {
-		addToken(cc, input[offset:length])
+		if isValue {
+			cc.Add(lastKey, token)
+			isValue = false
+		} else {
+			cc.Add(token, "")
+			lastKey = token
+		}
 	}
 
 	return cc, nil
 }
 
-func addToken(cc CacheControl, input string) {
-	var key, val string
-
-	if idx := strings.Index(input, "="); idx != -1 {
-		key = input[0:idx]
-		val = strings.Trim(input[idx+1:], `"`)
-	} else {
-		key = input
+func readString(subject string, offset int, endchars string) string {
+	var accum []rune
+	for _, b := range subject[offset:] {
+		if strings.Index(endchars, string(b)) != -1 {
+			break
+		} else {
+			accum = append(accum, b)
+		}
 	}
-
-	cc.Add(key, val)
+	return string(accum)
 }
 
 func (cc CacheControl) Get(key string) (string, bool) {
@@ -106,11 +105,7 @@ func (cc CacheControl) String() string {
 			buf.WriteString(k + ", ")
 		}
 		for _, val := range vals {
-			if strings.ContainsAny(val, `,"= `) {
-				buf.WriteString(fmt.Sprintf("%s=%q, ", k, val))
-			} else if val != "" {
-				buf.WriteString(fmt.Sprintf("%s=%s, ", k, val))
-			}
+			buf.WriteString(fmt.Sprintf("%s=%q, ", k, val))
 		}
 	}
 
