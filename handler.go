@@ -20,6 +20,27 @@ const (
 
 var Writes sync.WaitGroup
 
+var storeable = map[int]bool{
+	http.StatusOK:                   true,
+	http.StatusFound:                true,
+	http.StatusNonAuthoritativeInfo: true,
+	http.StatusMultipleChoices:      true,
+	http.StatusMovedPermanently:     true,
+	http.StatusGone:                 true,
+	http.StatusNotFound:             true,
+}
+
+var cacheableByDefault = map[int]bool{
+	http.StatusOK:                   true,
+	http.StatusFound:                true,
+	http.StatusNotModified:          true,
+	http.StatusNonAuthoritativeInfo: true,
+	http.StatusMultipleChoices:      true,
+	http.StatusMovedPermanently:     true,
+	http.StatusGone:                 true,
+	http.StatusPartialContent:       true,
+}
+
 type Handler struct {
 	Shared   bool
 	upstream http.Handler
@@ -192,39 +213,8 @@ func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, er
 	return currentAge, nil
 }
 
-func isStatusCacheableByDefault(status int) bool {
-	allowed := []int{
-		http.StatusOK,
-		http.StatusFound,
-		http.StatusNotModified,
-		http.StatusNonAuthoritativeInfo,
-		http.StatusMultipleChoices,
-		http.StatusMovedPermanently,
-		http.StatusGone,
-		http.StatusPartialContent,
-	}
-
-	for _, a := range allowed {
-		if a == status {
-			return true
-		}
-	}
-
-	return false
-}
-
-func isStatusStoreable(status int) bool {
-	allowed := []int{
-		http.StatusOK,
-		http.StatusFound,
-		http.StatusNonAuthoritativeInfo,
-		http.StatusMultipleChoices,
-		http.StatusMovedPermanently,
-		http.StatusGone,
-		http.StatusNotFound,
-	}
-
-	for _, a := range allowed {
+func inStatusList(status int, list []int) bool {
+	for _, a := range list {
 		if a == status {
 			return true
 		}
@@ -244,7 +234,7 @@ func (h *Handler) isCacheable(r *http.Request, res *Resource) bool {
 		return false
 	}
 
-	if !isStatusStoreable(res.Status()) {
+	if _, ok := storeable[res.Status()]; !ok {
 		return false
 	}
 
@@ -256,7 +246,7 @@ func (h *Handler) isCacheable(r *http.Request, res *Resource) bool {
 		return true
 	}
 
-	if isStatusCacheableByDefault(res.Status()) {
+	if _, ok := cacheableByDefault[res.Status()]; ok {
 		if cc.Has("public") {
 			return true
 		} else if res.HasValidators() {
