@@ -1,1 +1,44 @@
+---
 box: wercker/golang
+build:
+  steps:
+    - setup-go-workspace
+    - script:
+        code: |
+            cd $WERCKER_SOURCE_DIR
+            go version
+            go get -t github.com/lox/httpcache
+        name: "go get"
+    - script:
+        code: "go build ./...\n"
+        name: "go build"
+    - script:
+        code: "go test -v\n"
+        name: "go test"
+    - script:
+        code: "rsync -avz \"$WERCKER_SOURCE_DIR/\" \"$WERCKER_OUTPUT_DIR\""
+        name: "copy output"
+deploy:
+  steps:
+    - add-to-known_hosts:
+        hostname: $DEPLOY_HOST
+    - mktemp:
+        envvar: PRIVATEKEY_PATH
+    - create-file:
+        content: $FOO_PRIVATE
+        filename: $PRIVATEKEY_PATH
+        hide-from-log: true
+        name: "write key"
+        overwrite: true
+    - script:
+        code: "ssh -i $PRIVATEKEY_PATH -l root -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $DEPLOY_HOST stop httpcache"
+        name: "stop application"
+    - script:
+        code: |
+            pwd
+            ls -la
+            scp -i $PRIVATEKEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=no digitalocean-test root@$DEPLOY_HOST:/go/src/github.com/httpcache
+        name: "transfer application"
+    - script:
+        code: "ssh -i $PRIVATEKEY_PATH -l root -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $DEPLOY_HOST start httpcache"
+        name: "start application"
