@@ -20,25 +20,10 @@ build:
         name: "copy output"
 deploy:
   steps:
-    - add-to-known_hosts:
-        hostname: $DEPLOY_HOST
-    - mktemp:
-        envvar: PRIVATEKEY_PATH
-    - create-file:
-        content: $FOO_PRIVATE
-        filename: $PRIVATEKEY_PATH
-        hide-from-log: true
-        name: "write key"
-        overwrite: true
     - script:
-        code: "ssh -i $PRIVATEKEY_PATH -l root -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $DEPLOY_HOST stop httpcache"
-        name: "stop application"
-    - script:
-        code: |
-            pwd
-            ls -la
-            scp -i $PRIVATEKEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=no digitalocean-test root@$DEPLOY_HOST:/go/src/github.com/httpcache
-        name: "transfer application"
-    - script:
-        code: "ssh -i $PRIVATEKEY_PATH -l root -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $DEPLOY_HOST start httpcache"
-        name: "start application"
+        name: get version from rake
+        code: export APP_VERSION=$(rake appversion)
+
+    - github-create-release:
+        token: $GITHUB_TOKEN
+        tag: v1.0.0
