@@ -7,7 +7,6 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"sync"
 	"time"
@@ -42,16 +41,18 @@ var cacheableByDefault = map[int]bool{
 }
 
 type Handler struct {
-	Shared   bool
-	upstream http.Handler
-	cache    *Cache
+	Shared    bool
+	upstream  http.Handler
+	validator *Validator
+	cache     *Cache
 }
 
 func NewHandler(cache *Cache, upstream http.Handler) *Handler {
 	return &Handler{
-		upstream: upstream,
-		cache:    cache,
-		Shared:   false,
+		upstream:  upstream,
+		cache:     cache,
+		validator: &Validator{upstream},
+		Shared:    false,
 	}
 }
 
@@ -89,13 +90,13 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if h.needsValidation(res, req) {
 		Debugf("validating cached response")
 
-		if !h.validate(req, res) {
+		if h.validator.Validate(req.Request, res) {
+			Debugf("response is valid")
+			h.cache.Freshen(res, NewRequestKey(r).String())
+		} else {
 			Debugf("response is changed")
 			h.passUpstream(rw, r)
 			return
-		} else {
-			Debugf("response is valid")
-			h.cache.Freshen(res, NewRequestKey(r).String())
 		}
 	}
 
@@ -213,16 +214,6 @@ func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, er
 	return currentAge, nil
 }
 
-func inStatusList(status int, list []int) bool {
-	for _, a := range list {
-		if a == status {
-			return true
-		}
-	}
-
-	return false
-}
-
 func (h *Handler) isCacheable(r *http.Request, res *Resource) bool {
 	cc, err := res.cacheControl()
 	if err != nil {
@@ -310,49 +301,6 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 
 		Debugf("stored resources %+v in %s", keys, Clock().Sub(t))
 	}()
-}
-
-func (h *Handler) validate(r *request, res *Resource) bool {
-	req := r.cloneRequest()
-	resHeaders := res.Header()
-
-	if etag := resHeaders.Get("Etag"); etag != "" {
-		req.Header.Set("If-None-Match", etag)
-	} else if lastMod := resHeaders.Get("Last-Modified"); lastMod != "" {
-		req.Header.Set("If-Modified-Since", lastMod)
-	}
-
-	t := Clock()
-	resp := httptest.NewRecorder()
-	h.upstream.ServeHTTP(resp, req)
-	resp.Flush()
-
-	if age, err := correctedAge(resp.HeaderMap, t, Clock()); err == nil {
-		resp.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
-	}
-
-	valid := validateHeaders(resHeaders, resp.HeaderMap)
-	if valid {
-		res.header = resp.HeaderMap
-		res.header.Set(ProxyDateHeader, Clock().Format(http.TimeFormat))
-	}
-
-	return valid
-}
-
-var validationHeaders = []string{"ETag", "Content-MD5", "Last-Modified", "Content-Length"}
-
-func validateHeaders(h1, h2 http.Header) bool {
-	for _, header := range validationHeaders {
-		if value := h2.Get(header); value != "" {
-			if h1.Get(header) != value {
-				Debugf("%s changed, %q != %q", header, value, h1.Get(header))
-				return false
-			}
-		}
-	}
-
-	return true
 }
 
 // lookupResource finds the best matching Resource for the
@@ -463,18 +411,6 @@ func (r *request) cacheControl() (CacheControl, error) {
 
 	r.cc = cc
 	return cc, nil
-}
-
-// cloneRequest returns a clone of the provided *http.Request.
-// The clone is a shallow copy of the struct and its Header map.
-func (r *request) cloneRequest() *http.Request {
-	r2 := new(http.Request)
-	*r2 = *r.Request
-	r2.Header = make(http.Header)
-	for k, s := range r.Header {
-		r2.Header[k] = s
-	}
-	return r2
 }
 
 func (r *request) key() Key {
