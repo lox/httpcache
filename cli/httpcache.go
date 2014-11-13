@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -17,12 +18,14 @@ const (
 )
 
 var (
-	listen   string
-	useDisk  bool
-	private  bool
-	dir      string
-	dumpHttp bool
-	verbose  bool
+	listen      string
+	useDisk     bool
+	private     bool
+	dir         string
+	dumpHttp    bool
+	verbose     bool
+	version     string
+	showVersion bool
 )
 
 func init() {
@@ -32,14 +35,22 @@ func init() {
 	flag.BoolVar(&verbose, "v", false, "show verbose output and debugging")
 	flag.BoolVar(&private, "private", false, "make the cache private")
 	flag.BoolVar(&dumpHttp, "dumphttp", false, "dumps http requests and responses to stdout")
+	flag.BoolVar(&showVersion, "version", false, "shows the version")
 	flag.Parse()
 
 	if verbose {
 		httpcache.DebugLogging = true
 	}
+
+	if showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
 }
 
 func main() {
+	log.Printf("running httpcache %s\n", version)
+
 	proxy := &httputil.ReverseProxy{
 		Director: func(r *http.Request) {
 		},

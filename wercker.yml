@@ -10,20 +10,26 @@ build:
             go get -t github.com/lox/httpcache
         name: "go get"
     - script:
-        code: "go build ./...\n"
+        code: "go build -ldflags \"-X main.version $(git describe --tags --always)\" cli/httpcache.go\n"
         name: "go build"
     - script:
         code: "go test -v\n"
         name: "go test"
     - script:
-        code: "rsync -avz \"$WERCKER_SOURCE_DIR/\" \"$WERCKER_OUTPUT_DIR\""
-        name: "copy output"
+        code: "cp httpcache \"$WERCKER_OUTPUT_DIR\""
+        name: "copy binary"
 deploy:
   steps:
     - script:
-        name: get version from rake
-        code: export APP_VERSION=$(rake appversion)
+        name: get version from binary
+        code: export APP_VERSION=$(./httpcache --version)
 
     - github-create-release:
-        token: $GITHUB_TOKEN
-        tag: v1.0.0
+        token: $GITHUB_ACCESS_TOKEN
+        tag: $APP_VERSION
+        draft: true
+
+    - github-upload-asset:
+        token: $GITHUB_ACCESS_TOKEN
+        file: httpcache
+
