@@ -170,16 +170,16 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *http.Request) {
 	res := rw.Resource()
 	Debugf("upstream responded in %s", Clock().Sub(t).String())
 
-	if age, err := correctedAge(res.Header(), t, Clock()); err == nil {
-		res.Header().Set("Age", strconv.Itoa(int(math.Ceil(age.Seconds()))))
-	} else {
-		Debugf("error calculating corrected age: %s", err.Error())
-	}
-
 	if !h.isCacheable(r, res) {
 		Debugf("resource is uncacheable")
 		rw.Header().Set(CacheHeader, "SKIP")
 		return
+	}
+
+	if age, err := correctedAge(res.Header(), t, Clock()); err == nil {
+		res.Header().Set("Age", strconv.Itoa(int(math.Ceil(age.Seconds()))))
+	} else {
+		Debugf("error calculating corrected age: %s", err.Error())
 	}
 
 	rw.Header().Set(CacheHeader, "MISS")
@@ -195,14 +195,22 @@ func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, er
 		return time.Duration(0), err
 	}
 
+	Debugf("response_time: %d (%s relative to now)\n",
+		respTime.Unix(), Clock().Sub(respTime).String())
+
 	apparentAge := respTime.Sub(date)
 	if apparentAge < 0 {
 		apparentAge = 0
 	}
+	Debugf("apparent_age: %s\n", apparentAge.String())
+
 	respDelay := respTime.Sub(reqTime)
 	ageSeconds, err := intHeader("Age", h)
 	age := time.Second * time.Duration(ageSeconds)
 	correctedAge := age + respDelay
+
+	Debugf("sent_age: %s\n", age.String())
+	Debugf("corrected_age: %s (delay of %s)\n", correctedAge.String(), respDelay.String())
 
 	if apparentAge > correctedAge {
 		correctedAge = apparentAge
@@ -269,7 +277,10 @@ func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *http.
 		w.Header().Add("Warning", warn)
 	}
 
-	w.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
+	Debugf("resource is %s old, updating age from %q",
+		age.String(), w.Header().Get("Age"))
+
+	w.Header().Set("Age", fmt.Sprintf("%.f", math.Floor(age.Seconds())))
 	w.Header().Set("Via", res.Via())
 
 	// hacky handler for non-ok statuses
@@ -296,7 +307,7 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 		}
 
 		if err := h.cache.Store(res, keys...); err != nil {
-			Errorf("storing resource %#v failed: %s", err.Error(), keys)
+			Errorf("storing resources %#v failed with error: %s", keys, err.Error())
 		}
 
 		Debugf("stored resources %+v in %s", keys, Clock().Sub(t))
