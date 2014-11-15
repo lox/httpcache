@@ -24,10 +24,29 @@ log.Printf("proxy listening on http://%s", listen)
 log.Fatal(http.ListenAndServe(listen, proxy))
 ```
 
+## Implemented
+
+- All of [rfc7234][], except those listed below
+- Disk and Memory storage
+- Apache-like logging via `httplog` package
+
 ## Todo
 
+- Caching of conditional requests
+- Handling Authorization header correctly (currently uncacheable)
+- Handle Cache-Control directives that can be limited to certain headers
 - Offline operation
-- Handle key-based private headers
+- LRU metadata, cache eviction
+- Size constraints on memory/disk cache
+- Edge cases around handling chunked upstream responses and HTTP/1.0 clients
+- Proper handling of Via header
+- Respect max-age headers in Requests
+- Support for weak entities with `If-Match` and `If-None-Match`
+- Invalidation based on `Content-Location`
+
+## Testing
+
+Tests are currently conducted via the test suite and verified via the [CoAdvisor tool](http://coad.measurement-factory.com/).
 
 ## Reading List
 
