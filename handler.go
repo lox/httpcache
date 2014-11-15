@@ -119,7 +119,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) needsValidation(res *Resource, r *cacheRequest) bool {
-	if r.mustValidate() || res.MustValidate(h.Shared) {
+	if res.MustValidate(h.Shared) {
 		return true
 	}
 
@@ -422,14 +422,6 @@ func (r *cacheRequest) isCacheable() bool {
 	}
 
 	return true
-}
-
-func (r *cacheRequest) mustValidate() bool {
-	if r.Header.Get("If-Modified-Since") != "" {
-		return true
-	}
-
-	return r.CacheControl.Has("no-cache")
 }
 
 func newResponseWriter(w http.ResponseWriter) *responseWriter {
