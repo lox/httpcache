@@ -2,6 +2,7 @@ package httpcache
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -57,22 +58,21 @@ func NewHandler(cache *Cache, upstream http.Handler) *Handler {
 }
 
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
-	req := &request{Request: r, t: Clock()}
-
-	if bad, reason := req.isBadRequest(); bad {
-		http.Error(rw, "invalid request: "+reason,
+	cReq, err := newCacheRequest(r)
+	if err != nil {
+		http.Error(rw, "invalid request: "+err.Error(),
 			http.StatusBadRequest)
 		return
 	}
 
-	if !req.isCacheable() {
+	if !cReq.isCacheable() {
 		Debugf("request not cacheable")
 		rw.Header().Set(CacheHeader, "SKIP")
-		h.pipeUpstream(rw, r)
+		h.pipeUpstream(rw, cReq)
 		return
 	}
 
-	res, err := h.lookup(req)
+	res, err := h.lookup(cReq)
 	if err != nil && err != ErrNotFoundInCache {
 		http.Error(rw, "lookup error: "+err.Error(),
 			http.StatusInternalServerError)
@@ -80,27 +80,37 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	if err == ErrNotFoundInCache {
+		if cReq.CacheControl.Has("only-if-cached") {
+			http.Error(rw, "key not in cache",
+				http.StatusGatewayTimeout)
+			return
+		}
 		Debugf("%s %s not in cache", r.Method, r.URL.String())
-		h.passUpstream(rw, r)
+		h.passUpstream(rw, cReq)
 		return
 	} else {
 		Debugf("%s %s found in cache", r.Method, r.URL.String())
 	}
 
-	if h.needsValidation(res, req) {
-		Debugf("validating cached response")
+	if h.needsValidation(res, cReq) {
+		if cReq.CacheControl.Has("only-if-cached") {
+			http.Error(rw, "key was in cache, but required validation",
+				http.StatusGatewayTimeout)
+			return
+		}
 
-		if h.validator.Validate(req.Request, res) {
+		Debugf("validating cached response")
+		if h.validator.Validate(r, res) {
 			Debugf("response is valid")
-			h.cache.Freshen(res, NewRequestKey(r).String())
+			h.cache.Freshen(res, cReq.Key.String())
 		} else {
 			Debugf("response is changed")
-			h.passUpstream(rw, r)
+			h.passUpstream(rw, cReq)
 			return
 		}
 	}
 
-	h.serveResource(res, rw, r)
+	h.serveResource(res, rw, cReq)
 	rw.Header().Set(CacheHeader, "HIT")
 
 	if err := res.Close(); err != nil {
@@ -108,8 +118,8 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) needsValidation(res *Resource, req *request) bool {
-	if req.mustValidate() || res.MustValidate(h.Shared) {
+func (h *Handler) needsValidation(res *Resource, r *cacheRequest) bool {
+	if r.mustValidate() || res.MustValidate(h.Shared) {
 		return true
 	}
 
@@ -119,8 +129,21 @@ func (h *Handler) needsValidation(res *Resource, req *request) bool {
 
 	maxAge, err := res.MaxAge(h.Shared)
 	if err != nil {
-		Debugf("error calculating max-age: %s", err.Error())
+		Debugf("error parsing max-age: %s", err.Error())
 		return true
+	}
+
+	if r.CacheControl.Has("max-age") {
+		reqMaxAge, err := r.CacheControl.Duration("max-age")
+		if err != nil {
+			Debugf("error parsing request max-age: %s", err.Error())
+			return true
+		}
+
+		if reqMaxAge < maxAge {
+			Debugf("using request max-age of %s", reqMaxAge.String())
+			maxAge = reqMaxAge
+		}
 	}
 
 	age, err := res.Age()
@@ -134,9 +157,22 @@ func (h *Handler) needsValidation(res *Resource, req *request) bool {
 		return false
 	}
 
+	if r.CacheControl.Has("min-fresh") {
+		reqMinFresh, err := r.CacheControl.Duration("min-fresh")
+		if err != nil {
+			Debugf("error parsing request min-fresh: %s", err.Error())
+			return true
+		}
+
+		if (age + reqMinFresh) > maxAge {
+			log.Printf("fresh, but won't satisfy min-fresh of %s", reqMinFresh)
+			return true
+		}
+	}
+
 	if age > maxAge {
 		Debugf("age %q > max-age %q", age, maxAge)
-		maxStale, _ := req.maxStale()
+		maxStale, _ := r.CacheControl.Duration("max-stale")
 		if maxStale > (age - maxAge) {
 			log.Printf("stale, but within allowed max-stale period of %s", maxStale)
 			return false
@@ -148,29 +184,29 @@ func (h *Handler) needsValidation(res *Resource, req *request) bool {
 }
 
 // pipeUpstream makes the request via the upstream handler, the response is not stored or modified
-func (h *Handler) pipeUpstream(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) pipeUpstream(w http.ResponseWriter, r *cacheRequest) {
 	rw := newResponseWriter(w)
 
 	Debugf("piping request upstream")
-	h.upstream.ServeHTTP(rw, r)
+	h.upstream.ServeHTTP(rw, r.Request)
 
 	if r.Method == "HEAD" {
 		res := rw.Resource()
-		h.cache.Freshen(res, NewRequestKey(r).ForMethod("GET").String())
+		h.cache.Freshen(res, r.Key.ForMethod("GET").String())
 	}
 }
 
 // passUpstream makes the request via the upstream handler and stores the result
-func (h *Handler) passUpstream(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
 	rw := newResponseWriter(w)
 
 	t := Clock()
 	Debugf("passing request upstream")
-	h.upstream.ServeHTTP(rw, r)
+	h.upstream.ServeHTTP(rw, r.Request)
 	res := rw.Resource()
 	Debugf("upstream responded in %s", Clock().Sub(t).String())
 
-	if !h.isCacheable(r, res) {
+	if !h.isCacheable(res, r) {
 		Debugf("resource is uncacheable")
 		rw.Header().Set(CacheHeader, "SKIP")
 		return
@@ -184,7 +220,7 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *http.Request) {
 
 	rw.Header().Set(CacheHeader, "MISS")
 	rw.Header().Set(ProxyDateHeader, Clock().Format(http.TimeFormat))
-	h.storeResource(r, res)
+	h.storeResource(res, r)
 }
 
 // correctedAge adjusts the age of a resource for clock skeq and travel time
@@ -222,7 +258,7 @@ func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, er
 	return currentAge, nil
 }
 
-func (h *Handler) isCacheable(r *http.Request, res *Resource) bool {
+func (h *Handler) isCacheable(res *Resource, r *cacheRequest) bool {
 	cc, err := res.cacheControl()
 	if err != nil {
 		Errorf("Error parsing cache-control: %s", err.Error())
@@ -258,7 +294,7 @@ func (h *Handler) isCacheable(r *http.Request, res *Resource) bool {
 	return false
 }
 
-func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *http.Request) {
+func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *cacheRequest) {
 	for key, headers := range res.Header() {
 		for _, header := range headers {
 			w.Header().Add(key, header)
@@ -288,22 +324,22 @@ func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *http.
 		w.WriteHeader(res.Status())
 		io.Copy(w, res)
 	} else {
-		http.ServeContent(w, req, "", res.LastModified(), res)
+		http.ServeContent(w, req.Request, "", res.LastModified(), res)
 	}
 }
 
-func (h *Handler) storeResource(r *http.Request, res *Resource) {
+func (h *Handler) storeResource(res *Resource, r *cacheRequest) {
 	Writes.Add(1)
 
 	go func() {
 		defer Writes.Done()
 		t := Clock()
-		keys := []string{NewRequestKey(r).String()}
+		keys := []string{r.Key.String()}
 		headers := res.Header()
 
 		// store a secondary vary version
 		if vary := headers.Get("Vary"); vary != "" {
-			keys = append(keys, NewRequestKey(r).Vary(vary, r).String())
+			keys = append(keys, r.Key.Vary(vary, r.Request).String())
 		}
 
 		if err := h.cache.Store(res, keys...); err != nil {
@@ -316,13 +352,12 @@ func (h *Handler) storeResource(r *http.Request, res *Resource) {
 
 // lookupResource finds the best matching Resource for the
 // request, or nil and ErrNotFoundInCache if none is found
-func (h *Handler) lookup(req *request) (*Resource, error) {
-	key := req.key()
-	res, err := h.cache.Retrieve(key.String())
+func (h *Handler) lookup(req *cacheRequest) (*Resource, error) {
+	res, err := h.cache.Retrieve(req.Key.String())
 
 	// HEAD requests can possibly be served from GET
 	if err == ErrNotFoundInCache && req.Method == "HEAD" {
-		res, err = h.cache.Retrieve(key.ForMethod("GET").String())
+		res, err = h.cache.Retrieve(req.Key.ForMethod("GET").String())
 		if err != nil {
 			return nil, err
 		}
@@ -339,7 +374,7 @@ func (h *Handler) lookup(req *request) (*Resource, error) {
 
 	// Secondary lookup for Vary
 	if vary := res.Header().Get("Vary"); vary != "" {
-		res, err = h.cache.Retrieve(key.Vary(vary, req.Request).String())
+		res, err = h.cache.Retrieve(req.Key.Vary(vary, req.Request).String())
 		if err != nil {
 			return res, err
 		}
@@ -348,84 +383,53 @@ func (h *Handler) lookup(req *request) (*Resource, error) {
 	return res, nil
 }
 
-type request struct {
+type cacheRequest struct {
 	*http.Request
-	cc CacheControl
-	t  time.Time
+	Key          Key
+	Time         time.Time
+	CacheControl CacheControl
 }
 
-func (r *request) isCacheable() bool {
+func newCacheRequest(r *http.Request) (*cacheRequest, error) {
+	cc, err := ParseCacheControl(r.Header.Get("Cache-Control"))
+	if err != nil {
+		return nil, err
+	}
+
+	if r.Proto == "HTTP/1.1" && r.Host == "" {
+		return nil, errors.New("Host header can't be empty")
+	}
+
+	return &cacheRequest{
+		Request:      r,
+		Key:          NewRequestKey(r),
+		Time:         Clock(),
+		CacheControl: cc,
+	}, nil
+}
+
+func (r *cacheRequest) isCacheable() bool {
 	if !(r.Method == "GET" || r.Method == "HEAD") {
 		return false
 	}
 
-	cc, err := r.cacheControl()
-	if err != nil {
+	if maxAge, ok := r.CacheControl.Get("max-age"); ok && maxAge == "0" {
 		return false
 	}
 
-	maxAge, _ := cc.Get("max-age")
-
-	if cc.Has("no-store") || cc.Has("no-cache") || maxAge == "0" {
+	if r.CacheControl.Has("no-store") || r.CacheControl.Has("no-cache") {
 		return false
 	}
 
 	return true
 }
 
-func (r *request) isBadRequest() (valid bool, reason string) {
-	if _, err := r.cacheControl(); err != nil {
-		return false, "Failed to parse Cache-Control header"
-	}
-
-	if r.Request.Proto == "HTTP/1.1" && r.Request.Host == "" {
-		return true, "Host header can't be empty"
-	}
-	return false, ""
-}
-
-func (r *request) mustValidate() bool {
-	if r.Request.Header.Get("If-Modified-Since") != "" {
+func (r *cacheRequest) mustValidate() bool {
+	if r.Header.Get("If-Modified-Since") != "" {
 		return true
 	}
 
-	cc, err := r.cacheControl()
-	if err != nil {
-		return false
-	}
-
-	return cc.Has("no-cache")
-}
-
-func (r *request) maxStale() (time.Duration, error) {
-	cc, err := r.cacheControl()
-	if err != nil {
-		return time.Duration(0), err
-	}
-
-	if cc.Has("max-stale") {
-		return cc.Duration("max-stale")
-	}
-
-	return time.Duration(0), nil
-}
-
-func (r *request) cacheControl() (CacheControl, error) {
-	if r.cc != nil {
-		return r.cc, nil
-	}
-
-	cc, err := ParseCacheControl(r.Request.Header.Get("Cache-Control"))
-	if err != nil {
-		return cc, err
-	}
-
-	r.cc = cc
-	return cc, nil
-}
-
-func (r *request) key() Key {
-	return NewRequestKey(r.Request)
+	return r.CacheControl.Has("no-cache")
 }
 
 func newResponseWriter(w http.ResponseWriter) *responseWriter {

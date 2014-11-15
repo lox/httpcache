@@ -84,6 +84,53 @@ func TestSpecBasicCaching(t *testing.T) {
 	assert.Equal(t, time.Second*10, r2.age)
 }
 
+func TestSpecRequestCacheControl(t *testing.T) {
+	var cases = []struct {
+		cacheControl   string
+		cacheStatus    string
+		requests       int
+		secondsElapsed time.Duration
+	}{
+		{cacheControl: "", requests: 1},
+		{cacheControl: "no-cache", requests: 2},
+		{cacheControl: "no-store", requests: 2},
+		{cacheControl: "max-age=0", requests: 2},
+		{cacheControl: "max-stale=0", requests: 2, secondsElapsed: 65},
+		{cacheControl: "max-stale=60", requests: 1, secondsElapsed: 65},
+		{cacheControl: "max-stale=60", requests: 1, secondsElapsed: 65},
+		{cacheControl: "max-age=30", requests: 2, secondsElapsed: 40},
+		{cacheControl: "min-fresh=5", requests: 1},
+		{cacheControl: "min-fresh=120", requests: 2},
+	}
+
+	for idx, c := range cases {
+		client, upstream := testSetup()
+		upstream.CacheControl = "max-age=60"
+
+		assert.Equal(t, http.StatusOK, client.get("/").Code)
+		upstream.timeTravel(time.Second * time.Duration(c.secondsElapsed))
+
+		r := client.get("/", "Cache-Control: "+c.cacheControl)
+		assert.Equal(t, http.StatusOK, r.statusCode)
+		assert.Equal(t, c.requests, upstream.requests,
+			fmt.Sprintf("case #%d failed, %+v", idx+1, c))
+	}
+}
+
+func TestSpecRequestCacheControlWithOnlyIfCached(t *testing.T) {
+	client, upstream := testSetup()
+	upstream.CacheControl = "max-age=10"
+
+	assert.Equal(t, http.StatusOK, client.get("/").Code)
+	assert.Equal(t, http.StatusOK, client.get("/").Code)
+
+	upstream.timeTravel(time.Second * 20)
+	assert.Equal(t, http.StatusGatewayTimeout,
+		client.get("/", "Cache-Control: only-if-cached").Code)
+
+	assert.Equal(t, 1, upstream.requests)
+}
+
 func TestSpecCachingStatusCodes(t *testing.T) {
 	client, upstream := testSetup()
 	upstream.StatusCode = http.StatusNotFound
