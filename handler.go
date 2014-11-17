@@ -113,10 +113,9 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			h.passUpstream(rw, cReq)
 			return
 		}
-	} else {
-		Debugf("serving from cache")
 	}
 
+	Debugf("serving from cache")
 	h.serveResource(res, rw, cReq)
 	rw.Header().Set(CacheHeader, "HIT")
 
@@ -248,22 +247,15 @@ func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, er
 		return time.Duration(0), err
 	}
 
-	Debugf("response_time: %d (%s relative to now)\n",
-		respTime.Unix(), Clock().Sub(respTime).String())
-
 	apparentAge := respTime.Sub(date)
 	if apparentAge < 0 {
 		apparentAge = 0
 	}
-	Debugf("apparent_age: %s\n", apparentAge.String())
 
 	respDelay := respTime.Sub(reqTime)
 	ageSeconds, err := intHeader("Age", h)
 	age := time.Second * time.Duration(ageSeconds)
 	correctedAge := age + respDelay
-
-	Debugf("sent_age: %s\n", age.String())
-	Debugf("corrected_age: %s (delay of %s)\n", correctedAge.String(), respDelay.String())
 
 	if apparentAge > correctedAge {
 		correctedAge = apparentAge
@@ -335,13 +327,17 @@ func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *cache
 	}
 
 	// http://httpwg.github.io/specs/rfc7234.html#warn.113
-	if !res.HasExplicitExpiration() {
-		if age > (time.Hour*24) && res.HeuristicFreshness() > (time.Hour*24) {
-			w.Header().Add("Warning", `113 - "Heuristic Expiration"`)
-		}
+	if age > (time.Hour*24) && res.HeuristicFreshness() > (time.Hour*24) {
+		w.Header().Add("Warning", `113 - "Heuristic Expiration"`)
 	}
 
-	Debugf("resource is %s old, updating age from %q",
+	// http://httpwg.github.io/specs/rfc7234.html#warn.110
+	freshness, err := h.freshness(res, req)
+	if err != nil || freshness <= 0 {
+		w.Header().Add("Warning", `110 - "Response is Stale"`)
+	}
+
+	Debugf("resource is %s old, updating age from %s",
 		age.String(), w.Header().Get("Age"))
 
 	w.Header().Set("Age", fmt.Sprintf("%.f", math.Floor(age.Seconds())))
@@ -442,6 +438,12 @@ func newCacheRequest(r *http.Request) (*cacheRequest, error) {
 
 func (r *cacheRequest) isCacheable() bool {
 	if !(r.Method == "GET" || r.Method == "HEAD") {
+		return false
+	}
+
+	if r.Header.Get("If-Match") != "" ||
+		r.Header.Get("If-Unmodified-Since") != "" ||
+		r.Header.Get("If-Range") != "" {
 		return false
 	}
 
