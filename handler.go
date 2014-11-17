@@ -177,6 +177,10 @@ func (h *Handler) needsValidation(res *Resource, r *cacheRequest) bool {
 
 	if age > maxAge {
 		Debugf("age %q > max-age %q", age, maxAge)
+		if r.CacheControl.Has("max-stale") && len(r.CacheControl["max-stale"]) == 0 {
+			log.Printf("stale, but client sent max-stale")
+			return false
+		}
 		maxStale, _ := r.CacheControl.Duration("max-stale")
 		if maxStale > (age - maxAge) {
 			log.Printf("stale, but within allowed max-stale period of %s", maxStale)

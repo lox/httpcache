@@ -154,6 +154,7 @@ func TestSpecRequestCacheControl(t *testing.T) {
 		{cacheControl: "no-cache", requests: 2},
 		{cacheControl: "no-store", requests: 2},
 		{cacheControl: "max-age=0", requests: 2},
+		{cacheControl: "max-stale", requests: 1, secondsElapsed: 65},
 		{cacheControl: "max-stale=0", requests: 2, secondsElapsed: 65},
 		{cacheControl: "max-stale=60", requests: 1, secondsElapsed: 65},
 		{cacheControl: "max-stale=60", requests: 1, secondsElapsed: 65},
