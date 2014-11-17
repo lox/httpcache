@@ -120,6 +120,29 @@ func TestSpecResponseCacheControlWithPrivateHeaders(t *testing.T) {
 	assert.Equal(t, 2, upstream.requests)
 }
 
+func TestSpecResponseCacheControlWithAuthorizationHeaders(t *testing.T) {
+	client, upstream := testSetup()
+	client.cacheHandler.Shared = true
+	upstream.CacheControl = `max-age=10`
+	upstream.Header.Add("Authorization", "fully")
+	assert.Equal(t, http.StatusOK, client.get("/r1").Code)
+
+	r1 := client.get("/r1")
+	assert.Equal(t, http.StatusOK, r1.statusCode)
+	assert.Equal(t, "SKIP", r1.cacheStatus)
+	assert.Equal(t, "fully", r1.HeaderMap.Get("Authorization"))
+	assert.Equal(t, 2, upstream.requests)
+
+	client.cacheHandler.Shared = false
+	assert.Equal(t, http.StatusOK, client.get("/r2").Code)
+
+	r3 := client.get("/r2")
+	assert.Equal(t, http.StatusOK, r3.statusCode)
+	assert.Equal(t, "HIT", r3.cacheStatus)
+	assert.Equal(t, "fully", r3.HeaderMap.Get("Authorization"))
+	assert.Equal(t, 3, upstream.requests)
+}
+
 func TestSpecRequestCacheControl(t *testing.T) {
 	var cases = []struct {
 		cacheControl   string

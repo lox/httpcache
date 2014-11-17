@@ -286,6 +286,11 @@ func (h *Handler) isCacheable(res *Resource, r *cacheRequest) bool {
 		return false
 	}
 
+	if res.Header().Get("Authorization") != "" && h.Shared &&
+		!cc.Has("must-revalidate") && !cc.Has("s-maxage") {
+		return false
+	}
+
 	if res.HasExplicitExpiration() {
 		return true
 	}
