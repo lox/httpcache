@@ -113,6 +113,8 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			h.passUpstream(rw, cReq)
 			return
 		}
+	} else {
+		Debugf("serving from cache")
 	}
 
 	h.serveResource(res, rw, cReq)
@@ -123,26 +125,17 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) needsValidation(res *Resource, r *cacheRequest) bool {
-	if res.MustValidate(h.Shared) {
-		return true
-	}
-
-	if res.IsStale() {
-		return true
-	}
-
+// freshness returns the duration that a requested resource will be fresh for
+func (h *Handler) freshness(res *Resource, r *cacheRequest) (time.Duration, error) {
 	maxAge, err := res.MaxAge(h.Shared)
 	if err != nil {
-		Debugf("error parsing max-age: %s", err.Error())
-		return true
+		return time.Duration(0), err
 	}
 
 	if r.CacheControl.Has("max-age") {
 		reqMaxAge, err := r.CacheControl.Duration("max-age")
 		if err != nil {
-			Debugf("error parsing request max-age: %s", err.Error())
-			return true
+			return time.Duration(0), err
 		}
 
 		if reqMaxAge < maxAge {
@@ -153,13 +146,30 @@ func (h *Handler) needsValidation(res *Resource, r *cacheRequest) bool {
 
 	age, err := res.Age()
 	if err != nil {
-		Debugf("error calculating age: %s", err.Error())
+		return time.Duration(0), err
+	}
+
+	if res.IsStale() {
+		return time.Duration(0), nil
+	}
+
+	if hFresh := res.HeuristicFreshness(); hFresh > maxAge {
+		Debugf("using heuristic freshness of %q", hFresh)
+		maxAge = hFresh
+	}
+
+	return maxAge - age, nil
+}
+
+func (h *Handler) needsValidation(res *Resource, r *cacheRequest) bool {
+	if res.MustValidate(h.Shared) {
 		return true
 	}
 
-	if hFresh := res.HeuristicFreshness(); hFresh > age {
-		Debugf("heuristic freshness of %q", hFresh)
-		return false
+	freshness, err := h.freshness(res, r)
+	if err != nil {
+		Debugf("error calculating freshness: %s", err.Error())
+		return true
 	}
 
 	if r.CacheControl.Has("min-fresh") {
@@ -169,27 +179,25 @@ func (h *Handler) needsValidation(res *Resource, r *cacheRequest) bool {
 			return true
 		}
 
-		if (age + reqMinFresh) > maxAge {
-			log.Printf("fresh, but won't satisfy min-fresh of %s", reqMinFresh)
+		if freshness < reqMinFresh {
+			Debugf("resource is fresh, but won't satisfy min-fresh of %s", reqMinFresh)
 			return true
 		}
 	}
 
-	if age > maxAge {
-		Debugf("age %q > max-age %q", age, maxAge)
-		if r.CacheControl.Has("max-stale") && len(r.CacheControl["max-stale"]) == 0 {
-			log.Printf("stale, but client sent max-stale")
+	Debugf("resource has a freshness of %s", freshness)
+
+	if freshness <= 0 && r.CacheControl.Has("max-stale") {
+		if len(r.CacheControl["max-stale"]) == 0 {
+			Debugf("resource is stale, but client sent max-stale")
+			return false
+		} else if maxStale, _ := r.CacheControl.Duration("max-stale"); maxStale >= (freshness * -1) {
+			log.Printf("resource is stale, but within allowed max-stale period of %s", maxStale)
 			return false
 		}
-		maxStale, _ := r.CacheControl.Duration("max-stale")
-		if maxStale > (age - maxAge) {
-			log.Printf("stale, but within allowed max-stale period of %s", maxStale)
-			return false
-		}
-		return true
 	}
 
-	return false
+	return freshness <= 0
 }
 
 // pipeUpstream makes the request via the upstream handler, the response is not stored or modified
@@ -299,14 +307,14 @@ func (h *Handler) isCacheable(res *Resource, r *cacheRequest) bool {
 		return true
 	}
 
-	if _, ok := cacheableByDefault[res.Status()]; ok {
-		if cc.Has("public") {
-			return true
-		} else if res.HasValidators() {
-			return true
-		} else if res.HeuristicFreshness() > time.Duration(0) {
-			return true
-		}
+	if _, ok := cacheableByDefault[res.Status()]; !ok && !cc.Has("public") {
+		return false
+	}
+
+	if res.HasValidators() {
+		return true
+	} else if res.HeuristicFreshness() > 0 {
+		return true
 	}
 
 	return false
@@ -326,9 +334,11 @@ func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *cache
 		return
 	}
 
-	warnings, _ := res.Warnings()
-	for _, warn := range warnings {
-		w.Header().Add("Warning", warn)
+	// http://httpwg.github.io/specs/rfc7234.html#warn.113
+	if !res.HasExplicitExpiration() {
+		if age > (time.Hour*24) && res.HeuristicFreshness() > (time.Hour*24) {
+			w.Header().Add("Warning", `113 - "Heuristic Expiration"`)
+		}
 	}
 
 	Debugf("resource is %s old, updating age from %q",

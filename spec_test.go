@@ -68,8 +68,6 @@ func TestSpecResponseCacheControl(t *testing.T) {
 		{cacheControl: "max-age=60, must-revalidate", requests: 2, cacheStatus: "HIT"},
 		{cacheControl: "max-age=60, proxy-revalidate", requests: 1, cacheStatus: "HIT"},
 		{cacheControl: "max-age=60, proxy-revalidate", requests: 2, cacheStatus: "HIT", shared: true},
-		{cacheControl: "public", requests: 1, cacheStatus: "HIT"},
-		{cacheControl: "public", requests: 1, cacheStatus: "HIT", shared: true},
 		{cacheControl: "private, max-age=60", requests: 1, cacheStatus: "HIT"},
 		{cacheControl: "private, max-age=60", requests: 2, cacheStatus: "SKIP", shared: true},
 	}
@@ -194,19 +192,24 @@ func TestSpecRequestCacheControlWithOnlyIfCached(t *testing.T) {
 func TestSpecCachingStatusCodes(t *testing.T) {
 	client, upstream := testSetup()
 	upstream.StatusCode = http.StatusNotFound
-	upstream.CacheControl = "max-age=60"
+	upstream.CacheControl = "public, max-age=60"
 
-	r1 := client.get("/")
+	r1 := client.get("/r1")
 	assert.Equal(t, http.StatusNotFound, r1.statusCode)
 	assert.Equal(t, "MISS", r1.cacheStatus)
 	assert.Equal(t, string(upstream.Body), string(r1.body))
 
 	upstream.timeTravel(time.Second * 10)
-	r2 := client.get("/")
+	r2 := client.get("/r1")
 	assert.Equal(t, http.StatusNotFound, r2.statusCode)
 	assert.Equal(t, "HIT", r2.cacheStatus)
 	assert.Equal(t, string(upstream.Body), string(r2.body))
 	assert.Equal(t, time.Second*10, r2.age)
+
+	upstream.StatusCode = http.StatusPaymentRequired
+	r3 := client.get("/r2")
+	assert.Equal(t, http.StatusPaymentRequired, r3.statusCode)
+	assert.Equal(t, "SKIP", r3.cacheStatus)
 }
 
 func TestSpecConditionalCaching(t *testing.T) {

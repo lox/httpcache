@@ -238,24 +238,6 @@ func (r *Resource) HeuristicFreshness() time.Duration {
 	return time.Duration(0)
 }
 
-func (r *Resource) Warnings() ([]string, error) {
-	warns := []string{}
-
-	age, err := r.Age()
-	if err != nil {
-		return warns, err
-	}
-
-	// http://httpwg.github.io/specs/rfc7234.html#warn.113
-	if !r.HasExplicitExpiration() {
-		if age > (time.Hour*24) && r.HeuristicFreshness() > (time.Hour*24) {
-			warns = append(warns, `113 - "Heuristic Expiration"`)
-		}
-	}
-
-	return warns, nil
-}
-
 func (r *Resource) Via() string {
 	via := []string{}
 	via = append(via, fmt.Sprintf("1.1 %s", viaPseudonym))
