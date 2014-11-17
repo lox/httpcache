@@ -113,7 +113,12 @@ func (r *Resource) MustValidate(shared bool) bool {
 		return true
 	}
 
-	if cc.Has("must-revalidate") || cc.Has("proxy-revalidate") && shared {
+	// The s-maxage directive also implies the semantics of proxy-revalidate
+	if cc.Has("s-maxage") && shared {
+		return true
+	}
+
+	if cc.Has("must-revalidate") || (cc.Has("proxy-revalidate") && shared) {
 		return true
 	}
 

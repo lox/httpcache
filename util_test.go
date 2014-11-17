@@ -49,7 +49,8 @@ func parseHeaders(input []string) http.Header {
 }
 
 type client struct {
-	handler http.Handler
+	handler      http.Handler
+	cacheHandler *httpcache.Handler
 }
 
 func (c *client) do(r *http.Request) *clientResponse {

@@ -11,6 +11,7 @@ import (
 	"github.com/lox/httpcache"
 	"github.com/lox/httpcache/httplog"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func testSetup() (*client, *upstreamServer) {
@@ -25,15 +26,15 @@ func testSetup() (*client, *upstreamServer) {
 		return upstream.Now
 	}
 
-	hc := httpcache.NewHandler(
+	cacheHandler := httpcache.NewHandler(
 		httpcache.NewMemoryCache(),
 		upstream,
 	)
 
-	var handler http.Handler = hc
+	var handler http.Handler = cacheHandler
 
 	if testing.Verbose() {
-		rlogger := httplog.NewResponseLogger(hc)
+		rlogger := httplog.NewResponseLogger(cacheHandler)
 		rlogger.DumpRequests = true
 		rlogger.DumpResponses = true
 		handler = rlogger
@@ -42,46 +43,55 @@ func testSetup() (*client, *upstreamServer) {
 		log.SetOutput(ioutil.Discard)
 	}
 
-	return &client{handler}, upstream
+	return &client{handler, cacheHandler}, upstream
 }
 
-func TestSpecNoCaching(t *testing.T) {
-	var nocache = []string{
-		"max-age=0, no-cache",
-		"max-age=0",
-		"s-maxage=0",
+func TestSpecResponseCacheControl(t *testing.T) {
+	var cases = []struct {
+		cacheControl   string
+		cacheStatus    string
+		requests       int
+		secondsElapsed time.Duration
+		shared         bool
+	}{
+		{cacheControl: "", requests: 2},
+		{cacheControl: "no-cache", requests: 2, cacheStatus: "SKIP"},
+		{cacheControl: "no-store", requests: 2, cacheStatus: "SKIP"},
+		{cacheControl: "max-age=0, no-cache", requests: 2, cacheStatus: "SKIP"},
+		{cacheControl: "max-age=0", requests: 2, cacheStatus: "SKIP"},
+		{cacheControl: "s-maxage=0", requests: 2, cacheStatus: "SKIP", shared: true},
+		{cacheControl: "s-maxage=60", requests: 2, cacheStatus: "HIT", shared: true},
+		{cacheControl: "s-maxage=60", requests: 2, secondsElapsed: 65, shared: true},
+		{cacheControl: "max-age=60", requests: 1, cacheStatus: "HIT"},
+		{cacheControl: "max-age=60", requests: 1, secondsElapsed: 35, cacheStatus: "HIT"},
+		{cacheControl: "max-age=60", requests: 2, secondsElapsed: 65},
+		{cacheControl: "max-age=60, must-revalidate", requests: 2, cacheStatus: "HIT"},
+		{cacheControl: "max-age=60, proxy-revalidate", requests: 1, cacheStatus: "HIT"},
+		{cacheControl: "max-age=60, proxy-revalidate", requests: 2, cacheStatus: "HIT", shared: true},
+		{cacheControl: "public", requests: 1, cacheStatus: "HIT"},
+		{cacheControl: "public", requests: 1, cacheStatus: "HIT", shared: true},
+		{cacheControl: "private, max-age=60", requests: 1, cacheStatus: "HIT"},
+		{cacheControl: "private, max-age=60", requests: 2, cacheStatus: "SKIP", shared: true},
 	}
 
-	for _, cc := range nocache {
+	for idx, c := range cases {
 		client, upstream := testSetup()
-		upstream.CacheControl = cc
+		upstream.CacheControl = c.cacheControl
+		client.cacheHandler.Shared = c.shared
 
-		r1 := client.get("/")
-		assert.Equal(t, http.StatusOK, r1.Code)
-		assert.Equal(t, "SKIP", r1.cacheStatus,
-			fmt.Sprintf("Cache-Control of %q should SKIP", cc))
-		assert.Equal(t, string(upstream.Body), string(r1.body))
+		assert.Equal(t, http.StatusOK, client.get("/").Code)
+		upstream.timeTravel(time.Second * time.Duration(c.secondsElapsed))
 
-		r2 := client.get("/")
-		assert.Equal(t, http.StatusOK, r2.Code)
-		assert.Equal(t, "SKIP", r2.cacheStatus)
-		assert.Equal(t, string(upstream.Body), string(r1.body))
+		r := client.get("/")
+		assert.Equal(t, http.StatusOK, r.statusCode)
+		require.Equal(t, c.requests, upstream.requests,
+			fmt.Sprintf("case #%d failed, %+v", idx+1, c))
+
+		if c.cacheStatus != "" {
+			require.Equal(t, c.cacheStatus, r.cacheStatus,
+				fmt.Sprintf("case #%d failed, %+v", idx+1, c))
+		}
 	}
-}
-
-func TestSpecBasicCaching(t *testing.T) {
-	client, upstream := testSetup()
-	upstream.CacheControl = "max-age=60"
-
-	r1 := client.get("/")
-	assert.Equal(t, "MISS", r1.cacheStatus)
-	assert.Equal(t, string(upstream.Body), string(r1.body))
-
-	upstream.timeTravel(time.Second * 10)
-	r2 := client.get("/")
-	assert.Equal(t, "HIT", r2.cacheStatus)
-	assert.Equal(t, string(upstream.Body), string(r2.body))
-	assert.Equal(t, time.Second*10, r2.age)
 }
 
 func TestSpecRequestCacheControl(t *testing.T) {
