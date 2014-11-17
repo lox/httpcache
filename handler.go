@@ -79,17 +79,22 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cacheType := "private"
+	if h.Shared {
+		cacheType = "shared"
+	}
+
 	if err == ErrNotFoundInCache {
 		if cReq.CacheControl.Has("only-if-cached") {
 			http.Error(rw, "key not in cache",
 				http.StatusGatewayTimeout)
 			return
 		}
-		Debugf("%s %s not in cache", r.Method, r.URL.String())
+		Debugf("%s %s not in %s cache", r.Method, r.URL.String(), cacheType)
 		h.passUpstream(rw, cReq)
 		return
 	} else {
-		Debugf("%s %s found in cache", r.Method, r.URL.String())
+		Debugf("%s %s found in %s cache", r.Method, r.URL.String(), cacheType)
 	}
 
 	if h.needsValidation(res, cReq) {
@@ -265,7 +270,11 @@ func (h *Handler) isCacheable(res *Resource, r *cacheRequest) bool {
 		return false
 	}
 
-	if cc.Has("no-cache") || cc.Has("no-store") || (cc.Has("private") && h.Shared) {
+	if cc.Has("no-cache") || cc.Has("no-store") {
+		return false
+	}
+
+	if cc.Has("private") && len(cc["private"]) == 0 && h.Shared {
 		return false
 	}
 
@@ -336,6 +345,10 @@ func (h *Handler) storeResource(res *Resource, r *cacheRequest) {
 		t := Clock()
 		keys := []string{r.Key.String()}
 		headers := res.Header()
+
+		if h.Shared {
+			res.RemovePrivateHeaders()
+		}
 
 		// store a secondary vary version
 		if vary := headers.Get("Vary"); vary != "" {

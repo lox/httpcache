@@ -34,7 +34,6 @@ log.Fatal(http.ListenAndServe(listen, proxy))
 
 - Caching of conditional requests
 - Handling Authorization header correctly (currently uncacheable)
-- Handle Cache-Control directives that can be limited to certain headers
 - Offline operation
 - LRU metadata, cache eviction
 - Size constraints on memory/disk cache
@@ -43,6 +42,7 @@ log.Fatal(http.ListenAndServe(listen, proxy))
 - Respect max-age headers in Requests
 - Support for weak entities with `If-Match` and `If-None-Match`
 - Invalidation based on `Content-Location`
+- Better handling of duplicate headers and CacheControl values
 
 ## Testing
 

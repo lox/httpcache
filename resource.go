@@ -188,6 +188,18 @@ func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
 	return time.Duration(0), nil
 }
 
+func (r *Resource) RemovePrivateHeaders() {
+	cc, err := r.cacheControl()
+	if err != nil {
+		Debugf("Error parsing Cache-Control: %s", err.Error())
+	}
+
+	for _, p := range cc["private"] {
+		Debugf("removing private header %q", p)
+		r.header.Del(p)
+	}
+}
+
 func (r *Resource) HasValidators() bool {
 	if r.header.Get("Last-Modified") != "" || r.header.Get("Etag") != "" {
 		return true

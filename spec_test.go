@@ -94,6 +94,32 @@ func TestSpecResponseCacheControl(t *testing.T) {
 	}
 }
 
+func TestSpecResponseCacheControlWithPrivateHeaders(t *testing.T) {
+	client, upstream := testSetup()
+	client.cacheHandler.Shared = false
+	upstream.CacheControl = `max-age=10, private=X-Llamas, private=Set-Cookie"`
+	upstream.Header.Add("X-Llamas", "fully")
+	upstream.Header.Add("Set-Cookie", "llamas=true")
+	assert.Equal(t, http.StatusOK, client.get("/r1").Code)
+
+	r1 := client.get("/r1")
+	assert.Equal(t, http.StatusOK, r1.statusCode)
+	assert.Equal(t, "HIT", r1.cacheStatus)
+	assert.Equal(t, "fully", r1.HeaderMap.Get("X-Llamas"))
+	assert.Equal(t, "llamas=true", r1.HeaderMap.Get("Set-Cookie"))
+	assert.Equal(t, 1, upstream.requests)
+
+	client.cacheHandler.Shared = true
+	assert.Equal(t, http.StatusOK, client.get("/r2").Code)
+
+	r2 := client.get("/r2")
+	assert.Equal(t, http.StatusOK, r1.statusCode)
+	assert.Equal(t, "HIT", r2.cacheStatus)
+	assert.Equal(t, "", r2.HeaderMap.Get("X-Llamas"))
+	assert.Equal(t, "", r2.HeaderMap.Get("Set-Cookie"))
+	assert.Equal(t, 2, upstream.requests)
+}
+
 func TestSpecRequestCacheControl(t *testing.T) {
 	var cases = []struct {
 		cacheControl   string
