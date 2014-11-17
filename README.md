@@ -32,17 +32,17 @@ log.Fatal(http.ListenAndServe(listen, proxy))
 
 ## Todo
 
-- Caching of conditional requests
-- Handling Authorization header correctly (currently uncacheable)
 - Offline operation
-- LRU metadata, cache eviction
-- Size constraints on memory/disk cache
-- Edge cases around handling chunked upstream responses and HTTP/1.0 clients
-- Proper handling of Via header
-- Respect max-age headers in Requests
+- Size constraints on memory/disk cache and cache eviction 
+- Correctly handle mixture of HTTP1.0 clients and 1.1 upstreams
+- More detail in `Via` header
 - Support for weak entities with `If-Match` and `If-None-Match`
-- Invalidation based on `Content-Location`
+- Invalidation based on `Content-Location` and request method
 - Better handling of duplicate headers and CacheControl values
+
+## Caveats
+
+- Conditional requests are never cached, this includes `Range` requests
 
 ## Testing
 
