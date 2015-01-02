@@ -42,9 +42,18 @@ func TestVaryKey(t *testing.T) {
 }
 
 func TestRequestKeyWithContentLocation(t *testing.T) {
+	r := newRequest("GET", "http://x.org/test1", "Content-Location: http://x.org/test2")
+
+	k1 := httpcache.NewKey("GET", mustParseUrl("http://x.org/test2"), nil)
+	k2 := httpcache.NewRequestKey(r)
+
+	assert.Equal(t, k1.String(), k2.String())
+}
+
+func TestRequestKeyWithIllegalContentLocation(t *testing.T) {
 	r := newRequest("GET", "http://x.org/test1", "Content-Location: http://y.org/test2")
 
-	k1 := httpcache.NewKey("GET", mustParseUrl("http://y.org/test2"), nil)
+	k1 := httpcache.NewKey("GET", mustParseUrl("http://x.org/test1"), nil)
 	k2 := httpcache.NewRequestKey(r)
 
 	assert.Equal(t, k1.String(), k2.String())
