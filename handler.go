@@ -201,20 +201,26 @@ func (h *Handler) needsValidation(res *Resource, r *cacheRequest) bool {
 
 // pipeUpstream makes the request via the upstream handler, the response is not stored or modified
 func (h *Handler) pipeUpstream(w http.ResponseWriter, r *cacheRequest) {
-	rw := newResponseWriter(w)
+	rw := newResponseBuffer(w)
 
 	Debugf("piping request upstream")
 	h.upstream.ServeHTTP(rw, r.Request)
 
-	if r.Method == "HEAD" {
+	if r.Method == "HEAD" || r.isStateChanging() {
 		res := rw.Resource()
-		h.cache.Freshen(res, r.Key.ForMethod("GET").String())
+		defer res.Close()
+
+		if r.Method == "HEAD" {
+			h.cache.Freshen(res, r.Key.ForMethod("GET").String())
+		} else if res.IsNonErrorStatus() {
+			h.invalidateResource(res, r)
+		}
 	}
 }
 
 // passUpstream makes the request via the upstream handler and stores the result
 func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
-	rw := newResponseWriter(w)
+	rw := newResponseBuffer(w)
 
 	t := Clock()
 	Debugf("passing request upstream")
@@ -352,6 +358,15 @@ func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *cache
 	}
 }
 
+func (h *Handler) invalidateResource(res *Resource, r *cacheRequest) {
+	Writes.Add(1)
+
+	go func() {
+		defer Writes.Done()
+		Debugf("invalidating resource %+v", res)
+	}()
+}
+
 func (h *Handler) storeResource(res *Resource, r *cacheRequest) {
 	Writes.Add(1)
 
@@ -436,6 +451,14 @@ func newCacheRequest(r *http.Request) (*cacheRequest, error) {
 	}, nil
 }
 
+func (r *cacheRequest) isStateChanging() bool {
+	if !(r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE") {
+		return true
+	}
+
+	return false
+}
+
 func (r *cacheRequest) isCacheable() bool {
 	if !(r.Method == "GET" || r.Method == "HEAD") {
 		return false
@@ -458,30 +481,30 @@ func (r *cacheRequest) isCacheable() bool {
 	return true
 }
 
-func newResponseWriter(w http.ResponseWriter) *responseWriter {
-	return &responseWriter{
+func newResponseBuffer(w http.ResponseWriter) *responseBuffer {
+	return &responseBuffer{
 		ResponseWriter: w,
-		buf:            &bytes.Buffer{},
+		Buffer:         &bytes.Buffer{},
 	}
 }
 
-type responseWriter struct {
+type responseBuffer struct {
 	http.ResponseWriter
-	buf        *bytes.Buffer
-	statusCode int
+	Buffer     *bytes.Buffer
+	StatusCode int
 }
 
-func (rw *responseWriter) WriteHeader(status int) {
-	rw.statusCode = status
+func (rw *responseBuffer) WriteHeader(status int) {
+	rw.StatusCode = status
 	rw.ResponseWriter.WriteHeader(status)
 }
 
-func (rw *responseWriter) Write(b []byte) (int, error) {
-	rw.buf.Write(b)
+func (rw *responseBuffer) Write(b []byte) (int, error) {
+	rw.Buffer.Write(b)
 	return rw.ResponseWriter.Write(b)
 }
 
-// Resource returns a copy of the responseWriter as a Resource object
-func (rw *responseWriter) Resource() *Resource {
-	return NewResourceBytes(rw.statusCode, rw.buf.Bytes(), rw.Header())
+// Resource returns a copy of the responseBuffer as a Resource object
+func (rw *responseBuffer) Resource() *Resource {
+	return NewResourceBytes(rw.StatusCode, rw.Buffer.Bytes(), rw.Header())
 }

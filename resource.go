@@ -56,6 +56,10 @@ func NewResourceBytes(statusCode int, b []byte, hdrs http.Header) *Resource {
 	}
 }
 
+func (r *Resource) IsNonErrorStatus() bool {
+	return r.statusCode >= 200 && r.statusCode < 400
+}
+
 func (r *Resource) Status() int {
 	return r.statusCode
 }
