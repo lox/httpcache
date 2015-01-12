@@ -176,12 +176,12 @@ func (c *Cache) Freshen(res *Resource, keys ...string) error {
 	for _, key := range keys {
 		if h, err := c.Header(key); err == nil {
 			if h.StatusCode == res.Status() && headersEqual(h.Header, res.Header()) {
-				Debugf("freshening key %s", key)
+				debugf("freshening key %s", key)
 				if err := c.storeHeader(h.StatusCode, res.Header(), key); err != nil {
 					return err
 				}
 			} else {
-				Debugf("freshen failed, invalidating %s", key)
+				debugf("freshen failed, invalidating %s", key)
 				c.Invalidate(key)
 			}
 		}

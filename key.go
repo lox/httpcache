@@ -32,13 +32,13 @@ func NewRequestKey(r *http.Request) Key {
 				u = r.URL.ResolveReference(u)
 			}
 			if u.Host != r.Host {
-				Debugf("illegal host %q in Content-Location", u.Host)
+				debugf("illegal host %q in Content-Location", u.Host)
 			} else {
-				Debugf("using Content-Location: %q", u.String())
+				debugf("using Content-Location: %q", u.String())
 				URL = u
 			}
 		} else {
-			Debugf("failed to parse Content-Location %q", location)
+			debugf("failed to parse Content-Location %q", location)
 		}
 	}
 

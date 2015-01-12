@@ -113,7 +113,7 @@ func (r *Resource) Expires() (time.Time, error) {
 func (r *Resource) MustValidate(shared bool) bool {
 	cc, err := r.cacheControl()
 	if err != nil {
-		Debugf("Error parsing Cache-Control: ", err.Error())
+		debugf("Error parsing Cache-Control: ", err.Error())
 		return true
 	}
 
@@ -195,11 +195,11 @@ func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
 func (r *Resource) RemovePrivateHeaders() {
 	cc, err := r.cacheControl()
 	if err != nil {
-		Debugf("Error parsing Cache-Control: %s", err.Error())
+		debugf("Error parsing Cache-Control: %s", err.Error())
 	}
 
 	for _, p := range cc["private"] {
-		Debugf("removing private header %q", p)
+		debugf("removing private header %q", p)
 		r.header.Del(p)
 	}
 }
@@ -215,7 +215,7 @@ func (r *Resource) HasValidators() bool {
 func (r *Resource) HasExplicitExpiration() bool {
 	cc, err := r.cacheControl()
 	if err != nil {
-		Debugf("Error parsing Cache-Control: %s", err.Error())
+		debugf("Error parsing Cache-Control: %s", err.Error())
 		return false
 	}
 
