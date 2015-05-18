@@ -1,14 +1,12 @@
 package httpcache
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -46,6 +44,7 @@ type Handler struct {
 	upstream  http.Handler
 	validator *Validator
 	cache     *Cache
+	dogpile   *Dogpile
 }
 
 func NewHandler(cache *Cache, upstream http.Handler) *Handler {
@@ -54,6 +53,7 @@ func NewHandler(cache *Cache, upstream http.Handler) *Handler {
 		cache:     cache,
 		validator: &Validator{upstream},
 		Shared:    false,
+		dogpile:   NewDogpile(),
 	}
 }
 
@@ -118,10 +118,6 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	debugf("serving from cache")
 	h.serveResource(res, rw, cReq)
 	rw.Header().Set(CacheHeader, "HIT")
-
-	if err := res.Close(); err != nil {
-		errorf("Error closing resource: %s", err.Error())
-	}
 }
 
 // freshness returns the duration that a requested resource will be fresh for
@@ -148,7 +144,7 @@ func (h *Handler) freshness(res *Resource, r *cacheRequest) (time.Duration, erro
 		return time.Duration(0), err
 	}
 
-	if res.IsStale() {
+	if res.Stale {
 		return time.Duration(0), nil
 	}
 
@@ -201,48 +197,63 @@ func (h *Handler) needsValidation(res *Resource, r *cacheRequest) bool {
 
 // pipeUpstream makes the request via the upstream handler, the response is not stored or modified
 func (h *Handler) pipeUpstream(w http.ResponseWriter, r *cacheRequest) {
-	rw := newResponseBuffer(w)
-
 	debugf("piping request upstream")
-	h.upstream.ServeHTTP(rw, r.Request)
+	h.upstream.ServeHTTP(w, r.Request)
 
-	if r.Method == "HEAD" || r.isStateChanging() {
-		res := rw.Resource()
-		defer res.Close()
+	debugf("%#v", w.Header())
 
-		if r.Method == "HEAD" {
-			h.cache.Freshen(res, r.Key.ForMethod("GET").String())
-		} else if res.IsNonErrorStatus() {
-			h.invalidateResource(res, r)
-		}
-	}
+	// if r.Method == "HEAD" || r.isStateChanging() {
+	// 	res, err := rw.Resource()
+	// 	if err != nil {
+	// 		w.WriteHeader(http.StatusBadGateway)
+	// 		return
+	// 	}
+	// 	defer res.Close()
+
+	// 	if r.Method == "HEAD" {
+	// 		h.cache.Freshen(res, r.Key.ForMethod("GET").String())
+	// 	} else if res.IsNonErrorStatus() {
+	// 		h.invalidateResource(res, r)
+	// 	}
+	// }
 }
 
 // passUpstream makes the request via the upstream handler and stores the result
 func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
-	rw := newResponseBuffer(w)
+	res, err := h.dogpile.Resource(w, r)
+	if err != nil {
+		panic(err)
+	}
 
 	t := Clock()
 	debugf("passing request upstream")
-	h.upstream.ServeHTTP(rw, r.Request)
-	res := rw.Resource()
+	// h.upstream.ServeHTTP(rw, r.Request)
 	debugf("upstream responded in %s", Clock().Sub(t).String())
+	debugf("%#v", res)
 
-	if !h.isCacheable(res, r) {
-		debugf("resource is uncacheable")
-		rw.Header().Set(CacheHeader, "SKIP")
-		return
-	}
+	// rw.Close()
 
-	if age, err := correctedAge(res.Header(), t, Clock()); err == nil {
-		res.Header().Set("Age", strconv.Itoa(int(math.Ceil(age.Seconds()))))
-	} else {
-		debugf("error calculating corrected age: %s", err.Error())
-	}
+	// res, err := rw.Resource()
+	// if err != nil {
+	// 	panic(err) // TODO: handle this elegantly
+	// }
+	// debugf("upstream responded in %s", Clock().Sub(t).String())
 
-	rw.Header().Set(CacheHeader, "MISS")
-	rw.Header().Set(ProxyDateHeader, Clock().Format(http.TimeFormat))
-	h.storeResource(res, r)
+	// if !h.isCacheable(res, r) {
+	// 	debugf("resource is uncacheable")
+	// 	rw.Header().Set(CacheHeader, "SKIP")
+	// 	return
+	// }
+
+	// if age, err := correctedAge(res.Header(), t, Clock()); err == nil {
+	// 	res.Header().Set("Age", strconv.Itoa(int(math.Ceil(age.Seconds()))))
+	// } else {
+	// 	debugf("error calculating corrected age: %s", err.Error())
+	// }
+
+	// rw.Header().Set(CacheHeader, "MISS")
+	// rw.Header().Set(ProxyDateHeader, Clock().Format(http.TimeFormat))
+	// h.storeResource(res, r)
 }
 
 // correctedAge adjusts the age of a resource for clock skeq and travel time
@@ -273,18 +284,12 @@ func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, er
 	return currentAge, nil
 }
 
-func (h *Handler) isCacheable(res *Resource, r *cacheRequest) bool {
-	cc, err := res.cacheControl()
-	if err != nil {
-		errorf("Error parsing cache-control: %s", err.Error())
+func (h *Handler) isCacheable(res *Resource, req *cacheRequest) bool {
+	if res.CacheControl.Has("no-cache") || res.CacheControl.Has("no-store") {
 		return false
 	}
 
-	if cc.Has("no-cache") || cc.Has("no-store") {
-		return false
-	}
-
-	if cc.Has("private") && len(cc["private"]) == 0 && h.Shared {
+	if res.CacheControl.Has("private") && len(res.CacheControl["private"]) == 0 && h.Shared {
 		return false
 	}
 
@@ -292,12 +297,12 @@ func (h *Handler) isCacheable(res *Resource, r *cacheRequest) bool {
 		return false
 	}
 
-	if r.Header.Get("Authorization") != "" && h.Shared {
+	if req.Header.Get("Authorization") != "" && h.Shared {
 		return false
 	}
 
 	if res.Header().Get("Authorization") != "" && h.Shared &&
-		!cc.Has("must-revalidate") && !cc.Has("s-maxage") {
+		!res.CacheControl.Has("must-revalidate") && !res.CacheControl.Has("s-maxage") {
 		return false
 	}
 
@@ -305,7 +310,7 @@ func (h *Handler) isCacheable(res *Resource, r *cacheRequest) bool {
 		return true
 	}
 
-	if _, ok := cacheableByDefault[res.Status()]; !ok && !cc.Has("public") {
+	if _, ok := cacheableByDefault[res.Status()]; !ok && !res.CacheControl.Has("public") {
 		return false
 	}
 
@@ -349,12 +354,19 @@ func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *cache
 	w.Header().Set("Age", fmt.Sprintf("%.f", math.Floor(age.Seconds())))
 	w.Header().Set("Via", res.Via())
 
+	reader, err := res.Reader()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer reader.Close()
+
 	// hacky handler for non-ok statuses
 	if res.Status() != http.StatusOK {
 		w.WriteHeader(res.Status())
-		io.Copy(w, res)
+		io.Copy(w, reader)
 	} else {
-		http.ServeContent(w, req.Request, "", res.LastModified(), res)
+		http.ServeContent(w, req.Request, "", res.LastModified(), reader)
 	}
 }
 
@@ -481,30 +493,6 @@ func (r *cacheRequest) isCacheable() bool {
 	return true
 }
 
-func newResponseBuffer(w http.ResponseWriter) *responseBuffer {
-	return &responseBuffer{
-		ResponseWriter: w,
-		Buffer:         &bytes.Buffer{},
-	}
-}
-
-type responseBuffer struct {
+type responseWriter struct {
 	http.ResponseWriter
-	Buffer     *bytes.Buffer
-	StatusCode int
-}
-
-func (rw *responseBuffer) WriteHeader(status int) {
-	rw.StatusCode = status
-	rw.ResponseWriter.WriteHeader(status)
-}
-
-func (rw *responseBuffer) Write(b []byte) (int, error) {
-	rw.Buffer.Write(b)
-	return rw.ResponseWriter.Write(b)
-}
-
-// Resource returns a copy of the responseBuffer as a Resource object
-func (rw *responseBuffer) Resource() *Resource {
-	return NewResourceBytes(rw.StatusCode, rw.Buffer.Bytes(), rw.Header())
 }

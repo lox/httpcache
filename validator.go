@@ -30,8 +30,8 @@ func (v *Validator) Validate(req *http.Request, res *Resource) bool {
 	}
 
 	if headersEqual(resHeaders, resp.HeaderMap) {
-		res.header = resp.HeaderMap
-		res.header.Set(ProxyDateHeader, Clock().Format(http.TimeFormat))
+		// res.header = resp.HeaderMap
+		// res.header.Set(ProxyDateHeader, Clock().Format(http.TimeFormat))
 		return true
 	}
 

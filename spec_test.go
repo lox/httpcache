@@ -27,7 +27,7 @@ func testSetup() (*client, *upstreamServer) {
 	}
 
 	cacheHandler := httpcache.NewHandler(
-		httpcache.NewMemoryCache(),
+		httpcache.NewMemoryCache(1000),
 		upstream,
 	)
 
@@ -46,7 +46,7 @@ func testSetup() (*client, *upstreamServer) {
 	return &client{handler, cacheHandler}, upstream
 }
 
-func TestSpecResponseCacheControl(t *testing.T) {
+func TestSpecResponseCacheControlXXX(t *testing.T) {
 	var cases = []struct {
 		cacheControl   string
 		cacheStatus    string

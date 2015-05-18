@@ -1,13 +1,13 @@
 package httpcache
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/lox/httpcache/storage"
 )
 
 const (
@@ -19,81 +19,37 @@ var Clock = func() time.Time {
 	return time.Now().UTC()
 }
 
-type ReadSeekCloser interface {
-	io.Reader
-	io.Seeker
-	io.Closer
-}
-
-type byteReadSeekCloser struct {
-	*bytes.Reader
-}
-
-func (brsc *byteReadSeekCloser) Close() error { return nil }
-
 type Resource struct {
-	ReadSeekCloser
+	storage.Storable
 	RequestTime, ResponseTime time.Time
-	header                    http.Header
-	statusCode                int
-	cc                        CacheControl
-	stale                     bool
+	CacheControl              CacheControl
+	Stale                     bool
 }
 
-func NewResource(statusCode int, body ReadSeekCloser, hdrs http.Header) *Resource {
-	return &Resource{
-		header:         hdrs,
-		ReadSeekCloser: body,
-		statusCode:     statusCode,
+func NewResource(s storage.Storable) (*Resource, error) {
+	cc, err := ParseCacheControlHeaders(s.Header())
+	if err != nil {
+		return nil, err
 	}
+
+	return &Resource{
+		CacheControl: cc,
+		Storable:     s,
+	}, nil
 }
 
-func NewResourceBytes(statusCode int, b []byte, hdrs http.Header) *Resource {
-	return &Resource{
-		header:         hdrs,
-		statusCode:     statusCode,
-		ReadSeekCloser: &byteReadSeekCloser{bytes.NewReader(b)},
-	}
+func NewResourceBytes(status int, body []byte, h http.Header) (*Resource, error) {
+	return NewResource(storage.NewByteStorable(body, status, h))
 }
 
 func (r *Resource) IsNonErrorStatus() bool {
-	return r.statusCode >= 200 && r.statusCode < 400
-}
-
-func (r *Resource) Status() int {
-	return r.statusCode
-}
-
-func (r *Resource) Header() http.Header {
-	return r.header
-}
-
-func (r *Resource) IsStale() bool {
-	return r.stale
-}
-
-func (r *Resource) MarkStale() {
-	r.stale = true
-}
-
-func (r *Resource) cacheControl() (CacheControl, error) {
-	if r.cc != nil {
-		return r.cc, nil
-	}
-
-	cc, err := ParseCacheControlHeaders(r.header)
-	if err != nil {
-		return cc, err
-	}
-
-	r.cc = cc
-	return cc, nil
+	return r.Status() >= 200 && r.Status() < 400
 }
 
 func (r *Resource) LastModified() time.Time {
 	var modTime time.Time
 
-	if lastModHeader := r.header.Get("Last-Modified"); lastModHeader != "" {
+	if lastModHeader := r.Header().Get("Last-Modified"); lastModHeader != "" {
 		if t, err := http.ParseTime(lastModHeader); err == nil {
 			modTime = t
 		}
@@ -103,7 +59,7 @@ func (r *Resource) LastModified() time.Time {
 }
 
 func (r *Resource) Expires() (time.Time, error) {
-	if expires := r.header.Get("Expires"); expires != "" {
+	if expires := r.Header().Get("Expires"); expires != "" {
 		return http.ParseTime(expires)
 	}
 
@@ -111,18 +67,12 @@ func (r *Resource) Expires() (time.Time, error) {
 }
 
 func (r *Resource) MustValidate(shared bool) bool {
-	cc, err := r.cacheControl()
-	if err != nil {
-		debugf("Error parsing Cache-Control: ", err.Error())
-		return true
-	}
-
 	// The s-maxage directive also implies the semantics of proxy-revalidate
-	if cc.Has("s-maxage") && shared {
+	if r.CacheControl.Has("s-maxage") && shared {
 		return true
 	}
 
-	if cc.Has("must-revalidate") || (cc.Has("proxy-revalidate") && shared) {
+	if r.CacheControl.Has("must-revalidate") || (r.CacheControl.Has("proxy-revalidate") && shared) {
 		return true
 	}
 
@@ -130,7 +80,7 @@ func (r *Resource) MustValidate(shared bool) bool {
 }
 
 func (r *Resource) DateAfter(d time.Time) bool {
-	if dateHeader := r.header.Get("Date"); dateHeader != "" {
+	if dateHeader := r.Header().Get("Date"); dateHeader != "" {
 		if t, err := http.ParseTime(dateHeader); err != nil {
 			return false
 		} else {
@@ -144,15 +94,15 @@ func (r *Resource) DateAfter(d time.Time) bool {
 func (r *Resource) Age() (time.Duration, error) {
 	var age time.Duration
 
-	if ageInt, err := intHeader("Age", r.header); err == nil {
+	if ageInt, err := intHeader("Age", r.Header()); err == nil {
 		age = time.Second * time.Duration(ageInt)
 	}
 
-	if proxyDate, err := timeHeader(ProxyDateHeader, r.header); err == nil {
+	if proxyDate, err := timeHeader(ProxyDateHeader, r.Header()); err == nil {
 		return Clock().Sub(proxyDate) + age, nil
 	}
 
-	if date, err := timeHeader("Date", r.header); err == nil {
+	if date, err := timeHeader("Date", r.Header()); err == nil {
 		return Clock().Sub(date) + age, nil
 	}
 
@@ -160,28 +110,23 @@ func (r *Resource) Age() (time.Duration, error) {
 }
 
 func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
-	cc, err := r.cacheControl()
-	if err != nil {
-		return time.Duration(0), err
-	}
-
-	if cc.Has("s-maxage") && shared {
-		if maxAge, err := cc.Duration("s-maxage"); err != nil {
+	if r.CacheControl.Has("s-maxage") && shared {
+		if maxAge, err := r.CacheControl.Duration("s-maxage"); err != nil {
 			return time.Duration(0), err
 		} else if maxAge > 0 {
 			return maxAge, nil
 		}
 	}
 
-	if cc.Has("max-age") {
-		if maxAge, err := cc.Duration("max-age"); err != nil {
+	if r.CacheControl.Has("max-age") {
+		if maxAge, err := r.CacheControl.Duration("max-age"); err != nil {
 			return time.Duration(0), err
 		} else if maxAge > 0 {
 			return maxAge, nil
 		}
 	}
 
-	if expiresVal := r.header.Get("Expires"); expiresVal != "" {
+	if expiresVal := r.Header().Get("Expires"); expiresVal != "" {
 		expires, err := http.ParseTime(expiresVal)
 		if err != nil {
 			return time.Duration(0), err
@@ -193,19 +138,14 @@ func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
 }
 
 func (r *Resource) RemovePrivateHeaders() {
-	cc, err := r.cacheControl()
-	if err != nil {
-		debugf("Error parsing Cache-Control: %s", err.Error())
-	}
-
-	for _, p := range cc["private"] {
+	for _, p := range r.CacheControl["private"] {
 		debugf("removing private header %q", p)
-		r.header.Del(p)
+		r.Header().Del(p)
 	}
 }
 
 func (r *Resource) HasValidators() bool {
-	if r.header.Get("Last-Modified") != "" || r.header.Get("Etag") != "" {
+	if r.Header().Get("Last-Modified") != "" || r.Header().Get("Etag") != "" {
 		return true
 	}
 
@@ -213,17 +153,11 @@ func (r *Resource) HasValidators() bool {
 }
 
 func (r *Resource) HasExplicitExpiration() bool {
-	cc, err := r.cacheControl()
-	if err != nil {
-		debugf("Error parsing Cache-Control: %s", err.Error())
-		return false
-	}
-
-	if d, _ := cc.Duration("max-age"); d > time.Duration(0) {
+	if d, _ := r.CacheControl.Duration("max-age"); d > time.Duration(0) {
 		return true
 	}
 
-	if d, _ := cc.Duration("s-maxage"); d > time.Duration(0) {
+	if d, _ := r.CacheControl.Duration("s-maxage"); d > time.Duration(0) {
 		return true
 	}
 
@@ -235,7 +169,7 @@ func (r *Resource) HasExplicitExpiration() bool {
 }
 
 func (r *Resource) HeuristicFreshness() time.Duration {
-	if !r.HasExplicitExpiration() && r.header.Get("Last-Modified") != "" {
+	if !r.HasExplicitExpiration() && r.Header().Get("Last-Modified") != "" {
 		return Clock().Sub(r.LastModified()) / time.Duration(lastModDivisor)
 	}
 

@@ -1,28 +1,15 @@
 package httpcache
 
 import (
-	"bufio"
-	"bytes"
-	"crypto/sha256"
 	"errors"
-	"fmt"
-	"io"
+	"os"
+
 	"log"
 	"net/http"
-	"net/textproto"
-	"os"
-	pathutil "path"
-	"strconv"
-	"strings"
+
 	"time"
 
-	vfs "gopkgs.com/vfs.v1"
-)
-
-const (
-	headerPrefix = "header/"
-	bodyPrefix   = "body/"
-	formatPrefix = "v1/"
+	"github.com/lox/httpcache/storage"
 )
 
 // Returned when a resource doesn't exist
@@ -30,8 +17,8 @@ var ErrNotFoundInCache = errors.New("Not found in cache")
 
 // Cache provides a storage mechanism for cached Resources
 type Cache struct {
-	fs    vfs.VFS
-	stale map[string]time.Time
+	storage storage.Storage
+	stale   map[string]time.Time
 }
 
 type Header struct {
@@ -39,127 +26,52 @@ type Header struct {
 	StatusCode int
 }
 
-// NewCache returns a Cache backed off the provided VFS
-func NewCache(fs vfs.VFS) *Cache {
-	return &Cache{fs: fs, stale: map[string]time.Time{}}
+// NewCache returns a Cache backed off the provided Storage
+func NewCache(s storage.Storage) *Cache {
+	return &Cache{storage: s, stale: map[string]time.Time{}}
 }
 
 // NewMemoryCache returns an ephemeral cache in memory
-func NewMemoryCache() *Cache {
-	return NewCache(vfs.Memory())
+func NewMemoryCache(capacity uint64) *Cache {
+	return NewCache(storage.NewMemoryStorage(capacity))
 }
 
 // NewDiskCache returns a disk-backed cache
-func NewDiskCache(dir string) (*Cache, error) {
-	if err := os.MkdirAll(dir, 0777); err != nil {
-		return nil, err
-	}
-	fs, err := vfs.FS(dir)
+func NewDiskCache(dir string, perms os.FileMode, capacity uint64) (*Cache, error) {
+	store, err := storage.NewDiskStorage(dir, perms, capacity)
 	if err != nil {
 		return nil, err
 	}
-	chfs, err := vfs.Chroot("/", fs)
-	if err != nil {
-		return nil, err
-	}
-	return NewCache(chfs), nil
-}
-
-func (c *Cache) vfsWrite(path string, r io.Reader) error {
-	if err := vfs.MkdirAll(c.fs, pathutil.Dir(path), 0700); err != nil {
-		return err
-	}
-	f, err := c.fs.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if _, err := io.Copy(f, r); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Retrieve the Status and Headers for a given key path
-func (c *Cache) Header(key string) (Header, error) {
-	path := headerPrefix + formatPrefix + hashKey(key)
-	f, err := c.fs.Open(path)
-	if err != nil {
-		if vfs.IsNotExist(err) {
-			return Header{}, ErrNotFoundInCache
-		}
-		return Header{}, err
-	}
-
-	return readHeaders(bufio.NewReader(f))
+	return NewCache(store), nil
 }
 
 // Store a resource against a number of keys
 func (c *Cache) Store(res *Resource, keys ...string) error {
-	var buf = &bytes.Buffer{}
-
-	if length, err := strconv.ParseInt(res.Header().Get("Content-Length"), 10, 64); err == nil {
-		if _, err = io.CopyN(buf, res, length); err != nil {
-			return err
-		}
-	} else if _, err = io.Copy(buf, res); err != nil {
-		return err
-	}
-
 	for _, key := range keys {
-		delete(c.stale, key)
-
-		if err := c.storeBody(buf, key); err != nil {
-			return err
-		}
-
-		if err := c.storeHeader(res.Status(), res.Header(), key); err != nil {
+		if err := c.storage.Store(key, res); err != nil {
 			return err
 		}
 	}
 
-	return nil
-}
-
-func (c *Cache) storeBody(r io.Reader, key string) error {
-	if err := c.vfsWrite(bodyPrefix+formatPrefix+hashKey(key), r); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (c *Cache) storeHeader(code int, h http.Header, key string) error {
-	hb := &bytes.Buffer{}
-	hb.Write([]byte(fmt.Sprintf("HTTP/1.1 %d %s\r\n", code, http.StatusText(code))))
-	headersToWriter(h, hb)
-
-	if err := c.vfsWrite(headerPrefix+formatPrefix+hashKey(key), bytes.NewReader(hb.Bytes())); err != nil {
-		return err
-	}
 	return nil
 }
 
 // Retrieve returns a cached Resource for the given key
 func (c *Cache) Retrieve(key string) (*Resource, error) {
-	f, err := c.fs.Open(bodyPrefix + formatPrefix + hashKey(key))
+	storable, err := c.storage.Get(key)
+	if err != nil && storage.IsErrNotFound(err) {
+		return nil, ErrNotFoundInCache
+	}
+
+	res, err := NewResource(storable)
 	if err != nil {
-		if vfs.IsNotExist(err) {
-			return nil, ErrNotFoundInCache
-		}
 		return nil, err
 	}
-	h, err := c.Header(key)
-	if err != nil {
-		if vfs.IsNotExist(err) {
-			return nil, ErrNotFoundInCache
-		}
-		return nil, err
-	}
-	res := NewResource(h.StatusCode, f, h.Header)
+
 	if staleTime, exists := c.stale[key]; exists {
 		if !res.DateAfter(staleTime) {
 			log.Printf("stale marker of %s found", staleTime)
-			res.MarkStale()
+			res.Stale = true
 		}
 	}
 	return res, nil
@@ -174,55 +86,26 @@ func (c *Cache) Invalidate(keys ...string) {
 
 func (c *Cache) Freshen(res *Resource, keys ...string) error {
 	for _, key := range keys {
-		if h, err := c.Header(key); err == nil {
-			if h.StatusCode == res.Status() && headersEqual(h.Header, res.Header()) {
-				debugf("freshening key %s", key)
-				if err := c.storeHeader(h.StatusCode, res.Header(), key); err != nil {
-					return err
-				}
-			} else {
-				debugf("freshen failed, invalidating %s", key)
-				c.Invalidate(key)
+		status, h, err := c.storage.GetMeta(key)
+		if err != nil {
+			if storage.IsErrNotFound(err) {
+				continue
 			}
+			return err
 		}
+		log.Printf("todo: implement freshen: %#v %#v", status, h)
+
+		// if h, err := c.Header(key); err == nil {
+		// 	if h.StatusCode == res.Status() && headersEqual(h.Header, res.Header()) {
+		// 		debugf("freshening key %s", key)
+		// 		if err := c.storeHeader(h.StatusCode, res.Header(), key); err != nil {
+		// 			return err
+		// 		}
+		// 	} else {
+		// 		debugf("freshen failed, invalidating %s", key)
+		// 		c.Invalidate(key)
+		// 	}
+		// }
 	}
 	return nil
-}
-
-func hashKey(key string) string {
-	h := sha256.New()
-	io.WriteString(h, key)
-	return fmt.Sprintf("%x", h.Sum(nil))
-}
-
-func readHeaders(r *bufio.Reader) (Header, error) {
-	tp := textproto.NewReader(r)
-	line, err := tp.ReadLine()
-	if err != nil {
-		return Header{}, err
-	}
-
-	f := strings.SplitN(line, " ", 3)
-	if len(f) < 2 {
-		return Header{}, fmt.Errorf("malformed HTTP response: %s", line)
-	}
-	statusCode, err := strconv.Atoi(f[1])
-	if err != nil {
-		return Header{}, fmt.Errorf("malformed HTTP status code: %s", f[1])
-	}
-
-	mimeHeader, err := tp.ReadMIMEHeader()
-	if err != nil {
-		return Header{}, err
-	}
-	return Header{StatusCode: statusCode, Header: http.Header(mimeHeader)}, nil
-}
-
-func headersToWriter(h http.Header, w io.Writer) error {
-	if err := h.Write(w); err != nil {
-		return err
-	}
-	// ReadMIMEHeader expects a trailing newline
-	_, err := w.Write([]byte("\r\n"))
-	return err
 }
