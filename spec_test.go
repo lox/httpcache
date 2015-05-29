@@ -304,7 +304,7 @@ func TestSpecCacheControlMaxStale(t *testing.T) {
 	upstream.timeTravel(time.Second * 90)
 	r3 := client.get("/")
 	assert.Equal(t, "MISS", r3.cacheStatus)
-	assert.Equal(t, 0, r3.age)
+	assert.Equal(t, time.Duration(0), r3.age)
 }
 
 func TestSpecValidatingStaleResponsesUnchanged(t *testing.T) {
@@ -334,7 +334,7 @@ func TestSpecValidatingStaleResponsesWithNewContent(t *testing.T) {
 	assert.Equal(t, http.StatusOK, r2.Code)
 	assert.Equal(t, "MISS", r2.cacheStatus)
 	assert.Equal(t, "brand new content", string(r2.body))
-	assert.Equal(t, 0, r2.age)
+	assert.Equal(t, time.Duration(0), r2.age)
 }
 
 func TestSpecValidatingStaleResponsesWithNewEtag(t *testing.T) {
@@ -458,7 +458,7 @@ func TestSpecFresheningGetWithHeadRequest(t *testing.T) {
 
 	refreshed := client.get("/explicit")
 	assert.Equal(t, "HIT", refreshed.cacheStatus)
-	assert.Equal(t, 0, refreshed.age)
+	assert.Equal(t, time.Duration(0), refreshed.age)
 	assert.Equal(t, "llamas", refreshed.header.Get("X-Llamas"))
 }
 
