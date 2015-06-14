@@ -45,10 +45,10 @@ type Handler struct {
 	Shared    bool
 	upstream  http.Handler
 	validator *Validator
-	cache     *Cache
+	cache     Cache
 }
 
-func NewHandler(cache *Cache, upstream http.Handler) *Handler {
+func NewHandler(cache Cache, upstream http.Handler) *Handler {
 	return &Handler{
 		upstream:  upstream,
 		cache:     cache,

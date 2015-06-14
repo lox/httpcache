@@ -45,7 +45,7 @@ func main() {
 		},
 	}
 
-	var cache *httpcache.Cache
+	var cache httpcache.Cache
 
 	if useDisk || dir != "" {
 		log.Printf("storing cached resources in %s", dir)
