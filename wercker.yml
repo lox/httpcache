@@ -1,1 +1,17 @@
-box: wercker/golang
+# https://registry.hub.docker.com/u/library/golang/
+box: golang
+build:
+  steps:
+    - setup-go-workspace
+    - script:
+        name: install godep
+        code: |
+          go get github.com/tools/godep
+    - script:
+        name: godep restore
+        code: |
+           godep restore
+    - script:
+        name: godep go test
+        code: |
+          godep go test ./...
