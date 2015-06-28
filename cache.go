@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	vfs "gopkgs.com/vfs.v1"
+	"github.com/rainycape/vfs"
 )
 
 const (
