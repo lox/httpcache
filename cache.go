@@ -28,29 +28,39 @@ const (
 // Returned when a resource doesn't exist
 var ErrNotFoundInCache = errors.New("Not found in cache")
 
-// Cache provides a storage mechanism for cached Resources
-type Cache struct {
+type Cache interface {
+	Header(key string) (Header, error)
+	Store(res *Resource, keys ...string) error
+	Retrieve(key string) (*Resource, error)
+	Invalidate(keys ...string)
+	Freshen(res *Resource, keys ...string) error
+}
+
+// cache provides a storage mechanism for cached Resources
+type cache struct {
 	fs    vfs.VFS
 	stale map[string]time.Time
 }
+
+var _ Cache = (*cache)(nil)
 
 type Header struct {
 	http.Header
 	StatusCode int
 }
 
-// NewCache returns a Cache backed off the provided VFS
-func NewCache(fs vfs.VFS) *Cache {
-	return &Cache{fs: fs, stale: map[string]time.Time{}}
+// NewCache returns a cache backend off the provided VFS
+func NewVFSCache(fs vfs.VFS) Cache {
+	return &cache{fs: fs, stale: map[string]time.Time{}}
 }
 
 // NewMemoryCache returns an ephemeral cache in memory
-func NewMemoryCache() *Cache {
-	return NewCache(vfs.Memory())
+func NewMemoryCache() Cache {
+	return NewVFSCache(vfs.Memory())
 }
 
 // NewDiskCache returns a disk-backed cache
-func NewDiskCache(dir string) (*Cache, error) {
+func NewDiskCache(dir string) (Cache, error) {
 	if err := os.MkdirAll(dir, 0777); err != nil {
 		return nil, err
 	}
@@ -62,10 +72,10 @@ func NewDiskCache(dir string) (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewCache(chfs), nil
+	return NewVFSCache(chfs), nil
 }
 
-func (c *Cache) vfsWrite(path string, r io.Reader) error {
+func (c *cache) vfsWrite(path string, r io.Reader) error {
 	if err := vfs.MkdirAll(c.fs, pathutil.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -81,7 +91,7 @@ func (c *Cache) vfsWrite(path string, r io.Reader) error {
 }
 
 // Retrieve the Status and Headers for a given key path
-func (c *Cache) Header(key string) (Header, error) {
+func (c *cache) Header(key string) (Header, error) {
 	path := headerPrefix + formatPrefix + hashKey(key)
 	f, err := c.fs.Open(path)
 	if err != nil {
@@ -95,7 +105,7 @@ func (c *Cache) Header(key string) (Header, error) {
 }
 
 // Store a resource against a number of keys
-func (c *Cache) Store(res *Resource, keys ...string) error {
+func (c *cache) Store(res *Resource, keys ...string) error {
 	var buf = &bytes.Buffer{}
 
 	if length, err := strconv.ParseInt(res.Header().Get("Content-Length"), 10, 64); err == nil {
@@ -121,14 +131,14 @@ func (c *Cache) Store(res *Resource, keys ...string) error {
 	return nil
 }
 
-func (c *Cache) storeBody(r io.Reader, key string) error {
+func (c *cache) storeBody(r io.Reader, key string) error {
 	if err := c.vfsWrite(bodyPrefix+formatPrefix+hashKey(key), r); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *Cache) storeHeader(code int, h http.Header, key string) error {
+func (c *cache) storeHeader(code int, h http.Header, key string) error {
 	hb := &bytes.Buffer{}
 	hb.Write([]byte(fmt.Sprintf("HTTP/1.1 %d %s\r\n", code, http.StatusText(code))))
 	headersToWriter(h, hb)
@@ -140,7 +150,7 @@ func (c *Cache) storeHeader(code int, h http.Header, key string) error {
 }
 
 // Retrieve returns a cached Resource for the given key
-func (c *Cache) Retrieve(key string) (*Resource, error) {
+func (c *cache) Retrieve(key string) (*Resource, error) {
 	f, err := c.fs.Open(bodyPrefix + formatPrefix + hashKey(key))
 	if err != nil {
 		if vfs.IsNotExist(err) {
@@ -165,14 +175,14 @@ func (c *Cache) Retrieve(key string) (*Resource, error) {
 	return res, nil
 }
 
-func (c *Cache) Invalidate(keys ...string) {
+func (c *cache) Invalidate(keys ...string) {
 	log.Printf("invalidating %q", keys)
 	for _, key := range keys {
 		c.stale[key] = Clock()
 	}
 }
 
-func (c *Cache) Freshen(res *Resource, keys ...string) error {
+func (c *cache) Freshen(res *Resource, keys ...string) error {
 	for _, key := range keys {
 		if h, err := c.Header(key); err == nil {
 			if h.StatusCode == res.Status() && headersEqual(h.Header, res.Header()) {
