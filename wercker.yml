@@ -6,14 +6,7 @@ build:
     - script:
         name: install godep
         code: |
-          cd $WERCKER_SOURCE_DIR
-          go version
-          go get -u github.com/tools/godep
-          export PATH=$WERCKER_SOURCE_DIR/bin:$PATH
-    - script:
-        name: godep go build
-        code: |
-          godep go build ./...
+          go get github.com/tools/godep
     - script:
         name: godep go test
         code: |
