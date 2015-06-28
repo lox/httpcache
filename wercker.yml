@@ -1,1 +1,20 @@
-box: wercker/golang
+# https://registry.hub.docker.com/u/library/golang/
+box: golang
+build:
+  steps:
+    - setup-go-workspace
+    - script:
+        name: install godep
+        code: |
+          cd $WERCKER_SOURCE_DIR
+          go version
+          go get -u github.com/tools/godep
+          export PATH=$WERCKER_SOURCE_DIR/bin:$PATH
+    - script:
+        name: godep go build
+        code: |
+          godep go build ./...
+    - script:
+        name: godep go test
+        code: |
+          godep go test ./...
