@@ -21,7 +21,7 @@ handler := httpcache.NewHandler(httpcache.NewMemoryCache(), proxy)
 handler.Shared = true
 
 log.Printf("proxy listening on http://%s", listen)
-log.Fatal(http.ListenAndServe(listen, proxy))
+log.Fatal(http.ListenAndServe(listen, handler))
 ```
 
 ## Implemented
