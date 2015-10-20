@@ -42,6 +42,8 @@ func init() {
 func main() {
 	proxy := &httputil.ReverseProxy{
 		Director: func(r *http.Request) {
+			r.URL.Scheme = "http"
+			r.URL.Host = "127.0.0.1:80"
 		},
 	}
 
