@@ -116,8 +116,8 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	debugf("serving from cache")
+	res.Header().Set(CacheHeader, "HIT")
 	h.serveResource(res, rw, cReq)
-	rw.Header().Set(CacheHeader, "HIT")
 
 	if err := res.Close(); err != nil {
 		errorf("Error closing resource: %s", err.Error())
@@ -224,6 +224,7 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
 
 	t := Clock()
 	debugf("passing request upstream")
+	rw.Header().Set(CacheHeader, "MISS")
 	h.upstream.ServeHTTP(rw, r.Request)
 	res := rw.Resource()
 	debugf("upstream responded in %s", Clock().Sub(t).String())
@@ -240,7 +241,6 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
 		debugf("error calculating corrected age: %s", err.Error())
 	}
 
-	rw.Header().Set(CacheHeader, "MISS")
 	rw.Header().Set(ProxyDateHeader, Clock().Format(http.TimeFormat))
 	h.storeResource(res, r)
 }
