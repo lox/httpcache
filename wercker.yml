@@ -4,14 +4,6 @@ build:
   steps:
     - setup-go-workspace
     - script:
-        name: install godep
+        name: go test
         code: |
-          go get github.com/tools/godep
-    - script:
-        name: godep restore
-        code: |
-           godep restore
-    - script:
-        name: godep go test
-        code: |
-          godep go test ./...
+          go test . ./cli/... ./httplog/...
