@@ -208,7 +208,7 @@ func (h *Handler) pipeUpstream(w http.ResponseWriter, r *cacheRequest) {
 	rdr, err := rw.Stream.NextReader()
 	if err != nil {
 		debugf("error creating next stream reader: %v", err)
-		rw.Header().Set(CacheHeader, "SKIP")
+		w.Header().Set(CacheHeader, "SKIP")
 		h.upstream.ServeHTTP(w, r.Request)
 		return
 	}
