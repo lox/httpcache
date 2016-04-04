@@ -19,6 +19,12 @@
 			"path": "github.com/stretchr/testify/require",
 			"revision": "de7fcff264cd05cc0c90c509ea789a436a0dd206",
 			"revisionTime": "2014-09-15T02:00:11Z"
+		},
+		{
+			"checksumSHA1": "r2P3nttwhwKuAdSecDkyU+t2d/s=",
+			"path": "gopkg.in/djherbis/stream.v1",
+			"revision": "26a761059928627ca84837000dfb33447c66a146",
+			"revisionTime": "2016-02-04T06:24:40Z"
 		}
 	],
 	"rootPath": "github.com/lox/httpcache"
