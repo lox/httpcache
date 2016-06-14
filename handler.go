@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
+
+	"gopkg.in/djherbis/stream.v1"
 )
 
 const (
@@ -201,39 +204,76 @@ func (h *Handler) needsValidation(res *Resource, r *cacheRequest) bool {
 
 // pipeUpstream makes the request via the upstream handler, the response is not stored or modified
 func (h *Handler) pipeUpstream(w http.ResponseWriter, r *cacheRequest) {
-	rw := newResponseBuffer(w)
+	rw := newResponseStreamer(w)
+	rdr, err := rw.Stream.NextReader()
+	if err != nil {
+		debugf("error creating next stream reader: %v", err)
+		w.Header().Set(CacheHeader, "SKIP")
+		h.upstream.ServeHTTP(w, r.Request)
+		return
+	}
+	defer rdr.Close()
 
 	debugf("piping request upstream")
-	h.upstream.ServeHTTP(rw, r.Request)
+	go func() {
+		h.upstream.ServeHTTP(rw, r.Request)
+		rw.Stream.Close()
+	}()
+	rw.WaitHeaders()
 
-	if r.Method == "HEAD" || r.isStateChanging() {
-		res := rw.Resource()
-		defer res.Close()
+	if r.Method != "HEAD" && !r.isStateChanging() {
+		return
+	}
 
-		if r.Method == "HEAD" {
-			h.cache.Freshen(res, r.Key.ForMethod("GET").String())
-		} else if res.IsNonErrorStatus() {
-			h.invalidateResource(res, r)
-		}
+	res := rw.Resource()
+	defer res.Close()
+
+	if r.Method == "HEAD" {
+		h.cache.Freshen(res, r.Key.ForMethod("GET").String())
+	} else if res.IsNonErrorStatus() {
+		h.invalidateResource(res, r)
 	}
 }
 
 // passUpstream makes the request via the upstream handler and stores the result
 func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
-	rw := newResponseBuffer(w)
+	rw := newResponseStreamer(w)
+	rdr, err := rw.Stream.NextReader()
+	if err != nil {
+		debugf("error creating next stream reader: %v", err)
+		w.Header().Set(CacheHeader, "SKIP")
+		h.upstream.ServeHTTP(w, r.Request)
+		return
+	}
 
 	t := Clock()
 	debugf("passing request upstream")
 	rw.Header().Set(CacheHeader, "MISS")
-	h.upstream.ServeHTTP(rw, r.Request)
-	res := rw.Resource()
-	debugf("upstream responded in %s", Clock().Sub(t).String())
 
+	go func() {
+		h.upstream.ServeHTTP(rw, r.Request)
+		rw.Stream.Close()
+	}()
+	rw.WaitHeaders()
+	debugf("upstream responded headers in %s", Clock().Sub(t).String())
+
+	// just the headers!
+	res := NewResourceBytes(rw.StatusCode, nil, rw.Header())
 	if !h.isCacheable(res, r) {
+		rdr.Close()
 		debugf("resource is uncacheable")
 		rw.Header().Set(CacheHeader, "SKIP")
 		return
 	}
+	b, err := ioutil.ReadAll(rdr)
+	rdr.Close()
+	if err != nil {
+		debugf("error reading stream: %v", err)
+		rw.Header().Set(CacheHeader, "SKIP")
+		return
+	}
+	debugf("full upstream response took %s", Clock().Sub(t).String())
+	res.ReadSeekCloser = &byteReadSeekCloser{bytes.NewReader(b)}
 
 	if age, err := correctedAge(res.Header(), t, Clock()); err == nil {
 		res.Header().Set("Age", strconv.Itoa(int(math.Ceil(age.Seconds()))))
@@ -245,7 +285,7 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
 	h.storeResource(res, r)
 }
 
-// correctedAge adjusts the age of a resource for clock skeq and travel time
+// correctedAge adjusts the age of a resource for clock skew and travel time
 // https://httpwg.github.io/specs/rfc7234.html#rfc.section.4.2.3
 func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, error) {
 	date, err := timeHeader("Date", h)
@@ -481,30 +521,70 @@ func (r *cacheRequest) isCacheable() bool {
 	return true
 }
 
-func newResponseBuffer(w http.ResponseWriter) *responseBuffer {
-	return &responseBuffer{
+func newResponseStreamer(w http.ResponseWriter) *responseStreamer {
+	strm, err := stream.NewStream("responseBuffer", stream.NewMemFS())
+	if err != nil {
+		panic(err)
+	}
+	return &responseStreamer{
 		ResponseWriter: w,
-		Buffer:         &bytes.Buffer{},
+		Stream:         strm,
+		C:              make(chan struct{}),
 	}
 }
 
-type responseBuffer struct {
-	http.ResponseWriter
-	Buffer     *bytes.Buffer
+type responseStreamer struct {
 	StatusCode int
+	http.ResponseWriter
+	*stream.Stream
+	// C will be closed by WriteHeader to signal the headers' writing.
+	C chan struct{}
 }
 
-func (rw *responseBuffer) WriteHeader(status int) {
+// WaitHeaders returns iff and when WriteHeader has been called.
+func (rw *responseStreamer) WaitHeaders() {
+	for range rw.C {
+	}
+}
+
+func (rw *responseStreamer) WriteHeader(status int) {
+	defer close(rw.C)
 	rw.StatusCode = status
 	rw.ResponseWriter.WriteHeader(status)
 }
 
-func (rw *responseBuffer) Write(b []byte) (int, error) {
-	rw.Buffer.Write(b)
+func (rw *responseStreamer) Write(b []byte) (int, error) {
+	rw.Stream.Write(b)
 	return rw.ResponseWriter.Write(b)
 }
-
-// Resource returns a copy of the responseBuffer as a Resource object
-func (rw *responseBuffer) Resource() *Resource {
-	return NewResourceBytes(rw.StatusCode, rw.Buffer.Bytes(), rw.Header())
+func (rw *responseStreamer) Close() error {
+	return rw.Stream.Close()
 }
+
+// Resource returns a copy of the responseStreamer as a Resource object
+func (rw *responseStreamer) Resource() *Resource {
+	r, err := rw.Stream.NextReader()
+	if err == nil {
+		b, err := ioutil.ReadAll(r)
+		r.Close()
+		if err == nil {
+			return NewResourceBytes(rw.StatusCode, b, rw.Header())
+		}
+	}
+	return &Resource{
+		header:         rw.Header(),
+		statusCode:     rw.StatusCode,
+		ReadSeekCloser: errReadSeekCloser{err},
+	}
+}
+
+type errReadSeekCloser struct {
+	err error
+}
+
+func (e errReadSeekCloser) Error() string {
+	return e.err.Error()
+}
+func (e errReadSeekCloser) Close() error                       { return e.err }
+func (e errReadSeekCloser) Read(_ []byte) (int, error)         { return 0, e.err }
+func (e errReadSeekCloser) Seek(_ int64, _ int) (int64, error) { return 0, e.err }
