@@ -22,7 +22,7 @@ func (v *Validator) Validate(req *http.Request, res *Resource) bool {
 
 	t := Clock()
 	resp := httptest.NewRecorder()
-	v.Handler.ServeHTTP(resp, req)
+	v.Handler.ServeHTTP(resp, outreq)
 	resp.Flush()
 
 	if age, err := correctedAge(resp.HeaderMap, t, Clock()); err == nil {
