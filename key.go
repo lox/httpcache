@@ -21,7 +21,7 @@ func NewKey(method string, u *url.URL, h http.Header) Key {
 	return Key{method: method, header: h, u: *u, vary: []string{}}
 }
 
-// RequestKey generates a Key for a request
+// NewRequestKey generates a Key for a request
 func NewRequestKey(r *http.Request) Key {
 	URL := r.URL
 
@@ -45,7 +45,7 @@ func NewRequestKey(r *http.Request) Key {
 	return NewKey(r.Method, URL, r.Header)
 }
 
-// ForKey returns a new Key with a given method
+// ForMethod returns a new Key with a given method
 func (k Key) ForMethod(method string) Key {
 	k2 := k
 	k2.method = method
