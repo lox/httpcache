@@ -49,7 +49,7 @@ func main() {
 
 	var cache httpcache.Cache
 
-	if useDisk || dir != "" {
+	if useDisk && dir != "" {
 		log.Printf("storing cached resources in %s", dir)
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			log.Fatal(err)
