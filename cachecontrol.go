@@ -52,19 +52,10 @@ func ParseCacheControl(input string) (CacheControl, error) {
 	return cc, nil
 }
 
-func contains(set string, r rune) bool {
-	for _, ch := range set {
-		if r == ch {
-			return true
-		}
-	}
-	return false
-}
-
 func readUntil(subject string, offset int, endchars string) string {
 	rhs := offset
 	for _, ch := range subject[offset:] {
-		if contains(endchars, ch) {
+		if strings.ContainsRune(endchars, ch) {
 			break
 		}
 		rhs++
