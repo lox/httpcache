@@ -29,7 +29,11 @@ func ParseCacheControl(input string) (CacheControl, error) {
 		var token string
 		switch input[pos] {
 		case '"':
-			token = readString(input, pos+1, "\"")
+			if offset := strings.IndexAny(input[pos+1:], `"`); offset != -1 {
+				token = input[pos+1 : pos+1+offset]
+			} else {
+				token = input[pos+1:]
+			}
 			pos += len(token) + 1
 		case ',', '\n', '\r', ' ', '\t':
 			continue
@@ -37,7 +41,11 @@ func ParseCacheControl(input string) (CacheControl, error) {
 			isValue = true
 			continue
 		default:
-			token = readString(input, pos, "\"\n\t\r ,=")
+			if offset := strings.IndexAny(input[pos:], "\"\n\t\r ,="); offset != -1 {
+				token = input[pos : pos+offset]
+			} else {
+				token = input[pos:]
+			}
 			pos += len(token) - 1
 		}
 		if isValue {
@@ -50,18 +58,6 @@ func ParseCacheControl(input string) (CacheControl, error) {
 	}
 
 	return cc, nil
-}
-
-func readString(subject string, offset int, endchars string) string {
-	var accum []rune
-	for _, b := range subject[offset:] {
-		if strings.Index(endchars, string(b)) != -1 {
-			break
-		} else {
-			accum = append(accum, b)
-		}
-	}
-	return string(accum)
 }
 
 func (cc CacheControl) Get(key string) (string, bool) {
