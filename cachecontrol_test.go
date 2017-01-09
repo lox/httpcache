@@ -45,3 +45,14 @@ func TestParsingCacheControl(t *testing.T) {
 		require.NotEmpty(t, cc.String())
 	}
 }
+
+func BenchmarkCacheControlParsing(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := ParseCacheControl(`public, private="set-cookie", max-age=100`)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
