@@ -9,7 +9,7 @@
 
 ## Example
 
-This example if from the included CLI, it runs a caching proxy on http://localhost:8080.
+This example is from the included CLI, it runs a caching proxy on http://localhost:8080.
 
 ```go
 proxy := &httputil.ReverseProxy{
