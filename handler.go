@@ -277,7 +277,6 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
 	res.ReadSeekCloser = &byteReadSeekCloser{bytes.NewReader(b)}
 
 	if age, err := correctedAge(res.Header(), t, Clock()); err == nil {
-		debugf("age= %s", age.String())
 		res.Header().Set("Age", strconv.Itoa(int(math.Ceil(age.Seconds()))))
 	} else {
 		debugf("error calculating corrected age: %s", err.Error())
