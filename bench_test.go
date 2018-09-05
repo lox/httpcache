@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/lox/httpcache"
+	"github.com/flareglobal/httpcache-1"
 )
 
 func BenchmarkCachingFiles(b *testing.B) {

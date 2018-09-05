@@ -3,7 +3,7 @@ package httpcache_test
 import (
 	"testing"
 
-	. "github.com/lox/httpcache"
+	. "github.com/flareglobal/httpcache-1"
 	"github.com/stretchr/testify/require"
 )
 

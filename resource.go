@@ -113,7 +113,7 @@ func (r *Resource) Expires() (time.Time, error) {
 func (r *Resource) MustValidate(shared bool) bool {
 	cc, err := r.cacheControl()
 	if err != nil {
-		debugf("Error parsing Cache-Control: ", err.Error())
+		debugf("Error parsing Cache-Control: %s", err.Error())
 		return true
 	}
 

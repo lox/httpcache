@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lox/httpcache"
+	"github.com/flareglobal/httpcache-1"
 )
 
 func newRequest(method, url string, h ...string) *http.Request {
@@ -67,9 +67,6 @@ func (c *client) do(r *http.Request) *clientResponse {
 			panic("Can't parse age header")
 		}
 	}
-
-	// wait for writes to finish
-	httpcache.Writes.Wait()
 
 	return &clientResponse{
 		ResponseRecorder: rec,
