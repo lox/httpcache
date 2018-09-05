@@ -1,0 +1,5 @@
+github.com/rainycape/vfs v0.0.0-20150611133800-a62fd22bcf70 h1:fqsQ81lSs7GSky6L+FOZnJNoTL8DABxlBHRRW9LiKD8=
+github.com/rainycape/vfs v0.0.0-20150611133800-a62fd22bcf70/go.mod h1:ArOJDAI/9Dp6adwe3Fydx65JzxKEMaZXwMHebjLGxIM=
+github.com/stretchr/testify v0.0.0-20140915020011-de7fcff264cd/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXfy6kDkUVs=
+gopkg.in/djherbis/stream.v1 v1.0.1 h1:6Uhy75cGBJX2u513COFrIxzDy9ernZeinrOd+rh9vkk=
+gopkg.in/djherbis/stream.v1 v1.0.1/go.mod h1:aEV8CBVRmSpLamVJfM903Npic1IKmb2qS30VAZ+sssg=

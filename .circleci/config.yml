@@ -1,0 +1,15 @@
+version: 2
+jobs:
+  test:
+    docker:
+      - image: circleci/golang:1.11
+    steps:
+      - checkout
+      - run:
+          name: go test -tags integration
+          command: go test -tags integration -cover -failfast ./...
+workflows:
+  version: 2
+  test:
+    jobs:
+      - test

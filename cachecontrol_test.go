@@ -3,7 +3,7 @@ package httpcache_test
 import (
 	"testing"
 
-	. "github.com/flareglobal/httpcache-1"
+	. "github.com/flareglobal/httpcache-lox"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,6 +33,13 @@ func TestParsingCacheControl(t *testing.T) {
 		{`" max-age=8,max-age=8 "=blah`, CacheControl{
 			" max-age=8,max-age=8 ": []string{"blah"},
 		}},
+		{
+			ccString: "",
+			ccStruct: CacheControl{
+				"max-age": []string{"3600"},
+				"public":  []string{},
+			},
+		},
 	}
 
 	for _, expect := range table {

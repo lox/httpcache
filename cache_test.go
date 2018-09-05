@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flareglobal/httpcache-1"
+	"github.com/flareglobal/httpcache-lox"
 	"github.com/stretchr/testify/require"
 )
 
