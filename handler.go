@@ -253,6 +253,13 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
 
 	// just the headers!
 	res := NewResourceBytes(rw.StatusCode, nil, rw.Header())
+
+	// we use a def cache control if none is provided
+	if !res.HasAnyCacheControls() {
+		debugf("setting default cache-control")
+		res.SetDefaultCacheControl()
+	}
+
 	if !h.isCacheable(res, r) {
 		rdr.Close()
 		debugf("resource is uncacheable")
@@ -270,6 +277,7 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
 	res.ReadSeekCloser = &byteReadSeekCloser{bytes.NewReader(b)}
 
 	if age, err := correctedAge(res.Header(), t, Clock()); err == nil {
+		debugf("age= %s", age.String())
 		res.Header().Set("Age", strconv.Itoa(int(math.Ceil(age.Seconds()))))
 	} else {
 		debugf("error calculating corrected age: %s", err.Error())
@@ -308,11 +316,7 @@ func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, er
 }
 
 func (h *Handler) isCacheable(res *Resource, r *cacheRequest) bool {
-	cc, err := res.cacheControl()
-	if err != nil {
-		errorf("Error parsing cache-control: %s", err.Error())
-		return false
-	}
+	cc := res.cacheControl()
 
 	if cc.Has("no-cache") || cc.Has("no-store") {
 		return false
@@ -458,10 +462,7 @@ type cacheRequest struct {
 }
 
 func newCacheRequest(r *http.Request) (*cacheRequest, error) {
-	cc, err := ParseCacheControl(r.Header.Get("Cache-Control"))
-	if err != nil {
-		return nil, err
-	}
+	cc := ParseCacheControl(r.Header.Get(CacheControlHeader))
 
 	if r.Proto == "HTTP/1.1" && r.Host == "" {
 		return nil, errors.New("Host header can't be empty")

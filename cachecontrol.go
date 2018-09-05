@@ -15,11 +15,11 @@ const (
 
 type CacheControl map[string][]string
 
-func ParseCacheControlHeaders(h http.Header) (CacheControl, error) {
-	return ParseCacheControl(strings.Join(h["Cache-Control"], ", "))
+func ParseCacheControlHeaders(h http.Header) CacheControl {
+	return ParseCacheControl(strings.Join(h[CacheControlHeader], ", "))
 }
 
-func ParseCacheControl(input string) (CacheControl, error) {
+func ParseCacheControl(input string) CacheControl {
 	cc := make(CacheControl)
 	length := len(input)
 	isValue := false
@@ -57,13 +57,7 @@ func ParseCacheControl(input string) (CacheControl, error) {
 		}
 	}
 
-	// if no cache-control was found, set default max-age
-	if len(cc) == 0 {
-		cc.Add("max-age", "3600")
-		cc.Add("public", "")
-	}
-
-	return cc, nil
+	return cc
 }
 
 func (cc CacheControl) Get(key string) (string, bool) {
