@@ -107,20 +107,16 @@ func (r *Resource) LastModified() time.Time {
 	return modTime
 }
 
-func (r *Resource) Expires() (time.Time, error) {
+func (r *Resource) Expires() time.Time {
 	if expires := r.header.Get("Expires"); expires != "" {
-		switch expires {
-		// these cases imply already expired
-		case "-1":
-			return Clock().Add(-1 * time.Second), nil
-		case "0":
-			return Clock().Add(-1 * time.Second), nil
-		default:
-			return http.ParseTime(expires)
+		exp, err := http.ParseTime(expires)
+		if err != nil {
+			return Clock().Add(-1 * time.Second)
 		}
+		return exp
 	}
 
-	return time.Time{}, nil
+	return time.Time{}
 }
 
 func (r *Resource) MustValidate(shared bool) bool {
@@ -186,12 +182,7 @@ func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
 		}
 	}
 
-	expires, err := r.Expires()
-	if err != nil {
-		return 0, err
-	}
-
-	return expires.Sub(Clock()), nil
+	return r.Expires().Sub(Clock()), nil
 }
 
 func (r *Resource) RemovePrivateHeaders() {
@@ -226,7 +217,7 @@ func (r *Resource) HasExplicitExpiration() bool {
 		return true
 	}
 
-	if exp, _ := r.Expires(); exp.After(Clock()) {
+	if exp := r.Expires(); exp.After(Clock()) {
 		return true
 	}
 
