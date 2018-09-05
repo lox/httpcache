@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flareglobal/httpcache-1"
-	"github.com/flareglobal/httpcache-1/httplog"
+	"github.com/flareglobal/httpcache-lox"
+	"github.com/flareglobal/httpcache-lox/httplog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

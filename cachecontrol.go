@@ -57,6 +57,12 @@ func ParseCacheControl(input string) (CacheControl, error) {
 		}
 	}
 
+	// if no cache-control was found, set default max-age
+	if len(cc) == 0 {
+		cc.Add("max-age", "3600")
+		cc.Add("public", "")
+	}
+
 	return cc, nil
 }
 

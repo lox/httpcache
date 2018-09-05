@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flareglobal/httpcache-1"
+	"github.com/flareglobal/httpcache-lox"
 )
 
 func newRequest(method, url string, h ...string) *http.Request {
