@@ -50,6 +50,7 @@ func NewResource(statusCode int, body ReadSeekCloser, hdrs http.Header) *Resourc
 
 func NewResourceBytes(statusCode int, b []byte, hdrs http.Header) *Resource {
 	return &Resource{
+		cc:             ParseCacheControlHeaders(hdrs),
 		header:         hdrs,
 		statusCode:     statusCode,
 		ReadSeekCloser: &byteReadSeekCloser{bytes.NewReader(b)},
@@ -76,18 +77,22 @@ func (r *Resource) MarkStale() {
 	r.stale = true
 }
 
-func (r *Resource) cacheControl() (CacheControl, error) {
+func (r *Resource) SetDefaultCacheControl() {
+	r.cc = CacheControl{
+		"public":  nil,
+		"max-age": []string{"3600"},
+	}
+	r.header.Set(CacheControlHeader, "public, max-age=3600")
+}
+
+func (r *Resource) cacheControl() CacheControl {
 	if r.cc != nil {
-		return r.cc, nil
+		return r.cc
 	}
 
-	cc, err := ParseCacheControlHeaders(r.header)
-	if err != nil {
-		return cc, err
-	}
-
+	cc := ParseCacheControlHeaders(r.header)
 	r.cc = cc
-	return cc, nil
+	return cc
 }
 
 func (r *Resource) LastModified() time.Time {
@@ -102,21 +107,20 @@ func (r *Resource) LastModified() time.Time {
 	return modTime
 }
 
-func (r *Resource) Expires() (time.Time, error) {
+func (r *Resource) Expires() time.Time {
 	if expires := r.header.Get("Expires"); expires != "" {
-		return http.ParseTime(expires)
+		exp, err := http.ParseTime(expires)
+		if err != nil {
+			return Clock().Add(-1 * time.Second)
+		}
+		return exp
 	}
 
-	return time.Time{}, nil
+	return time.Time{}
 }
 
 func (r *Resource) MustValidate(shared bool) bool {
-	cc, err := r.cacheControl()
-	if err != nil {
-		debugf("Error parsing Cache-Control: %s", err.Error())
-		return true
-	}
-
+	cc := r.cacheControl()
 	// The s-maxage directive also implies the semantics of proxy-revalidate
 	if cc.Has("s-maxage") && shared {
 		return true
@@ -160,10 +164,7 @@ func (r *Resource) Age() (time.Duration, error) {
 }
 
 func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
-	cc, err := r.cacheControl()
-	if err != nil {
-		return time.Duration(0), err
-	}
+	cc := r.cacheControl()
 
 	if cc.Has("s-maxage") && shared {
 		if maxAge, err := cc.Duration("s-maxage"); err != nil {
@@ -181,22 +182,11 @@ func (r *Resource) MaxAge(shared bool) (time.Duration, error) {
 		}
 	}
 
-	if expiresVal := r.header.Get("Expires"); expiresVal != "" {
-		expires, err := http.ParseTime(expiresVal)
-		if err != nil {
-			return time.Duration(0), err
-		}
-		return expires.Sub(Clock()), nil
-	}
-
-	return time.Duration(0), nil
+	return r.Expires().Sub(Clock()), nil
 }
 
 func (r *Resource) RemovePrivateHeaders() {
-	cc, err := r.cacheControl()
-	if err != nil {
-		debugf("Error parsing Cache-Control: %s", err.Error())
-	}
+	cc := r.cacheControl()
 
 	for _, p := range cc["private"] {
 		debugf("removing private header %q", p)
@@ -212,12 +202,12 @@ func (r *Resource) HasValidators() bool {
 	return false
 }
 
+func (r *Resource) HasAnyCacheControls() bool {
+	return len(r.cc) > 0 || r.HasValidators() || r.HasExplicitExpiration() || r.header.Get("Expires") != ""
+}
+
 func (r *Resource) HasExplicitExpiration() bool {
-	cc, err := r.cacheControl()
-	if err != nil {
-		debugf("Error parsing Cache-Control: %s", err.Error())
-		return false
-	}
+	cc := r.cacheControl()
 
 	if d, _ := cc.Duration("max-age"); d > time.Duration(0) {
 		return true
@@ -227,7 +217,7 @@ func (r *Resource) HasExplicitExpiration() bool {
 		return true
 	}
 
-	if exp, _ := r.Expires(); !exp.IsZero() {
+	if exp := r.Expires(); exp.After(Clock()) {
 		return true
 	}
 

@@ -35,21 +35,20 @@ func TestParsingCacheControl(t *testing.T) {
 		}},
 		{
 			ccString: "",
+			ccStruct: CacheControl{},
+		},
+		{
+			ccString: "no-cache",
 			ccStruct: CacheControl{
-				"max-age": []string{"3600"},
-				"public":  []string{},
+				"no-cache": []string{},
 			},
 		},
 	}
 
 	for _, expect := range table {
-		cc, err := ParseCacheControl(expect.ccString)
-		if err != nil {
-			t.Fatal(err)
-		}
+		cc := ParseCacheControl(expect.ccString)
 
 		require.Equal(t, cc, expect.ccStruct)
-		require.NotEmpty(t, cc.String())
 	}
 }
 
@@ -57,9 +56,6 @@ func BenchmarkCacheControlParsing(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := ParseCacheControl(`public, private="set-cookie", max-age=100`)
-		if err != nil {
-			b.Fatal(err)
-		}
+		ParseCacheControl(`public, private="set-cookie", max-age=100`)
 	}
 }

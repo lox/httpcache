@@ -25,12 +25,12 @@ func (v *Validator) Validate(req *http.Request, res *Resource) bool {
 	v.Handler.ServeHTTP(resp, outreq)
 	resp.Flush()
 
-	if age, err := correctedAge(resp.HeaderMap, t, Clock()); err == nil {
+	if age, err := correctedAge(resp.Header(), t, Clock()); err == nil {
 		resp.Header().Set("Age", fmt.Sprintf("%.f", age.Seconds()))
 	}
 
-	if headersEqual(resHeaders, resp.HeaderMap) {
-		res.header = resp.HeaderMap
+	if headersEqual(resHeaders, resp.Header()) {
+		res.header = resp.Header()
 		res.header.Set(ProxyDateHeader, Clock().Format(http.TimeFormat))
 		return true
 	}
