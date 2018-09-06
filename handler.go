@@ -402,16 +402,17 @@ func (h *Handler) invalidateResource(res *Resource, r *cacheRequest) {
 func (h *Handler) storeResource(res *Resource, r *cacheRequest) {
 	t := Clock()
 	keys := []string{r.Key.String()}
-	headers := res.Header()
 
 	if h.Shared {
 		res.RemovePrivateHeaders()
 	}
 
+	// TODO: VARY broken
+	//headers := res.Header()
 	// store a secondary vary version
-	if vary := headers.Get("Vary"); vary != "" {
-		keys = append(keys, r.Key.Vary(vary, r.Request).String())
-	}
+	//if vary := headers.Get("Vary"); vary != "" {
+	//	keys = append(keys, r.Key.Vary(vary, r.Request).String())
+	//}
 
 	if err := h.cache.Store(res, keys...); err != nil {
 		errorf("storing resources %#v failed with error: %s", keys, err.Error())
@@ -442,13 +443,14 @@ func (h *Handler) lookup(req *cacheRequest) (*Resource, error) {
 		return res, err
 	}
 
-	// Secondary lookup for Vary
-	if vary := res.Header().Get("Vary"); vary != "" {
-		res, err = h.cache.Retrieve(req.Key.Vary(vary, req.Request).String())
-		if err != nil {
-			return res, err
-		}
-	}
+	//Secondary lookup for Vary
+	// TODO: VARY broken
+	//if vary := res.Header().Get("Vary"); vary != "" {
+	//	res, err = h.cache.Retrieve(req.Key.Vary(vary, req.Request).String())
+	//	if err != nil {
+	//		return res, err
+	//	}
+	//}
 
 	return res, nil
 }
