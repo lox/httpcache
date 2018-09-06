@@ -118,7 +118,6 @@ func (c *cache) Store(res *Resource, keys ...string) error {
 
 	for _, key := range keys {
 		delete(c.stale, key)
-
 		if err := c.storeBody(buf, key); err != nil {
 			return err
 		}

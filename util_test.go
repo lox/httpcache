@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lox/httpcache"
+	"github.com/flareglobal/httpcache-lox"
 )
 
 func newRequest(method, url string, h ...string) *http.Request {
@@ -61,23 +61,20 @@ func (c *client) do(r *http.Request) *clientResponse {
 	var age int
 	var err error
 
-	if ageHeader := rec.HeaderMap.Get("Age"); ageHeader != "" {
+	if ageHeader := rec.Header().Get("Age"); ageHeader != "" {
 		age, err = strconv.Atoi(ageHeader)
 		if err != nil {
 			panic("Can't parse age header")
 		}
 	}
 
-	// wait for writes to finish
-	httpcache.Writes.Wait()
-
 	return &clientResponse{
 		ResponseRecorder: rec,
-		cacheStatus:      rec.HeaderMap.Get(httpcache.CacheHeader),
+		cacheStatus:      rec.Header().Get(httpcache.CacheHeader),
 		statusCode:       rec.Code,
 		age:              time.Second * time.Duration(age),
 		body:             rec.Body.Bytes(),
-		header:           rec.HeaderMap,
+		header:           rec.Header(),
 	}
 }
 
@@ -140,7 +137,7 @@ func (u *upstreamServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	if u.CacheControl != "" {
-		rw.Header().Set("Cache-Control", u.CacheControl)
+		rw.Header().Set(httpcache.CacheControlHeader, u.CacheControl)
 	}
 
 	if u.Etag != "" {

@@ -3,7 +3,7 @@ package httpcache_test
 import (
 	"testing"
 
-	. "github.com/lox/httpcache"
+	. "github.com/flareglobal/httpcache-lox"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,16 +33,22 @@ func TestParsingCacheControl(t *testing.T) {
 		{`" max-age=8,max-age=8 "=blah`, CacheControl{
 			" max-age=8,max-age=8 ": []string{"blah"},
 		}},
+		{
+			ccString: "",
+			ccStruct: CacheControl{},
+		},
+		{
+			ccString: "no-cache",
+			ccStruct: CacheControl{
+				"no-cache": []string{},
+			},
+		},
 	}
 
 	for _, expect := range table {
-		cc, err := ParseCacheControl(expect.ccString)
-		if err != nil {
-			t.Fatal(err)
-		}
+		cc := ParseCacheControl(expect.ccString)
 
 		require.Equal(t, cc, expect.ccStruct)
-		require.NotEmpty(t, cc.String())
 	}
 }
 
@@ -50,9 +56,6 @@ func BenchmarkCacheControlParsing(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := ParseCacheControl(`public, private="set-cookie", max-age=100`)
-		if err != nil {
-			b.Fatal(err)
-		}
+		ParseCacheControl(`public, private="set-cookie", max-age=100`)
 	}
 }

@@ -7,8 +7,8 @@ import (
 	"net/http/httputil"
 	"os"
 
-	"github.com/lox/httpcache"
-	"github.com/lox/httpcache/httplog"
+	"github.com/flareglobal/httpcache-lox"
+	"github.com/flareglobal/httpcache-lox/httplog"
 )
 
 const (

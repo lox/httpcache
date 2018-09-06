@@ -215,11 +215,8 @@ func (h *Handler) pipeUpstream(w http.ResponseWriter, r *cacheRequest) {
 	defer rdr.Close()
 
 	debugf("piping request upstream")
-	go func() {
-		h.upstream.ServeHTTP(rw, r.Request)
-		rw.Stream.Close()
-	}()
-	rw.WaitHeaders()
+	h.upstream.ServeHTTP(rw, r.Request)
+	rw.Stream.Close()
 
 	if r.Method != "HEAD" && !r.isStateChanging() {
 		return
@@ -250,15 +247,19 @@ func (h *Handler) passUpstream(w http.ResponseWriter, r *cacheRequest) {
 	debugf("passing request upstream")
 	rw.Header().Set(CacheHeader, "MISS")
 
-	go func() {
-		h.upstream.ServeHTTP(rw, r.Request)
-		rw.Stream.Close()
-	}()
-	rw.WaitHeaders()
+	h.upstream.ServeHTTP(rw, r.Request)
+	rw.Stream.Close()
 	debugf("upstream responded headers in %s", Clock().Sub(t).String())
 
 	// just the headers!
 	res := NewResourceBytes(rw.StatusCode, nil, rw.Header())
+
+	// we use a def cache control if none is provided
+	if !res.HasAnyCacheControls() {
+		debugf("setting default cache-control")
+		res.SetDefaultCacheControl()
+	}
+
 	if !h.isCacheable(res, r) {
 		rdr.Close()
 		debugf("resource is uncacheable")
@@ -314,11 +315,7 @@ func correctedAge(h http.Header, reqTime, respTime time.Time) (time.Duration, er
 }
 
 func (h *Handler) isCacheable(res *Resource, r *cacheRequest) bool {
-	cc, err := res.cacheControl()
-	if err != nil {
-		errorf("Error parsing cache-control: %s", err.Error())
-		return false
-	}
+	cc := res.cacheControl()
 
 	if cc.Has("no-cache") || cc.Has("no-store") {
 		return false
@@ -399,38 +396,29 @@ func (h *Handler) serveResource(res *Resource, w http.ResponseWriter, req *cache
 }
 
 func (h *Handler) invalidateResource(res *Resource, r *cacheRequest) {
-	Writes.Add(1)
-
-	go func() {
-		defer Writes.Done()
-		debugf("invalidating resource %+v", res)
-	}()
+	debugf("invalidating resource %+v", res)
 }
 
 func (h *Handler) storeResource(res *Resource, r *cacheRequest) {
-	Writes.Add(1)
+	t := Clock()
+	keys := []string{r.Key.String()}
 
-	go func() {
-		defer Writes.Done()
-		t := Clock()
-		keys := []string{r.Key.String()}
-		headers := res.Header()
+	if h.Shared {
+		res.RemovePrivateHeaders()
+	}
 
-		if h.Shared {
-			res.RemovePrivateHeaders()
-		}
+	// TODO: VARY broken
+	//headers := res.Header()
+	// store a secondary vary version
+	//if vary := headers.Get("Vary"); vary != "" {
+	//	keys = append(keys, r.Key.Vary(vary, r.Request).String())
+	//}
 
-		// store a secondary vary version
-		if vary := headers.Get("Vary"); vary != "" {
-			keys = append(keys, r.Key.Vary(vary, r.Request).String())
-		}
+	if err := h.cache.Store(res, keys...); err != nil {
+		errorf("storing resources %#v failed with error: %s", keys, err.Error())
+	}
 
-		if err := h.cache.Store(res, keys...); err != nil {
-			errorf("storing resources %#v failed with error: %s", keys, err.Error())
-		}
-
-		debugf("stored resources %+v in %s", keys, Clock().Sub(t))
-	}()
+	debugf("stored resources %+v in %s", keys, Clock().Sub(t))
 }
 
 // lookupResource finds the best matching Resource for the
@@ -455,13 +443,14 @@ func (h *Handler) lookup(req *cacheRequest) (*Resource, error) {
 		return res, err
 	}
 
-	// Secondary lookup for Vary
-	if vary := res.Header().Get("Vary"); vary != "" {
-		res, err = h.cache.Retrieve(req.Key.Vary(vary, req.Request).String())
-		if err != nil {
-			return res, err
-		}
-	}
+	//Secondary lookup for Vary
+	// TODO: VARY broken
+	//if vary := res.Header().Get("Vary"); vary != "" {
+	//	res, err = h.cache.Retrieve(req.Key.Vary(vary, req.Request).String())
+	//	if err != nil {
+	//		return res, err
+	//	}
+	//}
 
 	return res, nil
 }
@@ -474,10 +463,7 @@ type cacheRequest struct {
 }
 
 func newCacheRequest(r *http.Request) (*cacheRequest, error) {
-	cc, err := ParseCacheControl(r.Header.Get("Cache-Control"))
-	if err != nil {
-		return nil, err
-	}
+	cc := ParseCacheControl(r.Header.Get(CacheControlHeader))
 
 	if r.Proto == "HTTP/1.1" && r.Host == "" {
 		return nil, errors.New("Host header can't be empty")
